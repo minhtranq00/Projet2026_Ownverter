@@ -103,6 +103,25 @@ static const float32_t V_HIGH_MIN = 5.0;
 static const float32_t Ts = 100.0e-6F;
 static const uint32_t control_task_period = (uint32_t)(Ts * 1.e6F);
 
+/* IMC Controller Variables */
+static float32_t eta[4] = {0.0F, 0.0F, 0.0F, 0.0F};
+static float32_t i_alpha, i_beta;
+static float32_t v_alpha, v_beta;
+static float32_t i_alpha_ref, i_beta_ref;
+static float32_t e_alpha, e_beta;
+
+/* Constants */
+static const float32_t TS_IMC = 100.0e-6F;
+static const float32_t PHI_IMC = 0.12F;
+static const float32_t I_MAX = 5.0F;
+/* Pre-computed Gain Matrix from Julia (cK) */
+static const float32_t cK[2][6] = {
+    { 0.0045F  , 0.0F,     -1.6595F, 0.6725F, 0.0F,        0.0F      },
+    { 0.0F,     0.0045F,  0.0F,       0.0F,     -1.6595F,   0.6725F }
+};
+static float32_t i_alpha_ref_filtered = 0.0F;
+static float32_t i_beta_ref_filtered  = 0.0F;
+static float32_t w_res = 0.0F; 
 /* Hall effect sensors */
 static uint8_t HALL1_value;
 static uint8_t HALL2_value;
@@ -161,6 +180,8 @@ static float32_t duty_a, duty_b;
 static float32_t Ia_ref;
 static float32_t Ib_ref;
 static float32_t Va;
+static float32_t Vb;
+static float32_t Vc;
 static float32_t Iq_meas;
 static float32_t Id_meas;
 static float32_t Iq_ref;
@@ -184,8 +205,8 @@ static float32_t theta_m_ref = 0.0F;
 static float32_t theta_m = 0.0F;
 static float32_t omega_m = 0.0F;
 static float32_t Ki_pos = -2.0F;
-static float32_t Kp_pos = -0.3F;
-static float32_t Kd_pos = -0.002F;
+static float32_t Kp_pos = 30.0F;
+static float32_t Kd_pos = 0.05F;
 static float32_t Iq_ref_pos = 0.0F;
  
 static float32_t int_pos = 0.0F;
@@ -200,6 +221,18 @@ static const float32_t pole_pairs = 4.0F; // Motor 8 poles -> 4 pole pairs
 
 static float32_t angle_prev = 0.0F;
 static float32_t angle_elec_unwrapped = 0.0F;
+
+/* Encoder for position control */
+static int32_t encoder_count = 0;
+static const int32_t ENCODER_COUNTS_PER_REV = 100 * 4 / (capstan_gear / motor_gear); // adapt to encoder resolution
+static float32_t theta_m_encoder = 0.0F;             
+static float32_t theta_e_encoder = 0.0F;             
+static float32_t encoder_offset = - 0.1F;                   
+static bool encoder_aligned = false;
+
+/*static bool is_aligning = false; // Flag to indicate if the system is currently performing encoder alignment
+static uint32_t alignment_counter = 0; // Counter to keep track of time spent in alignment phase (in control cycles)
+static const uint32_t ALIGNMENT_DURATION = 2000; // Duration of the alignment phase in control cycles (e.g., 2000 cycles at 100us = 0.2 seconds)*/
 
 /**
  * Low Pass Filters Init
@@ -220,7 +253,7 @@ static float32_t inverse_Vhigh;
 static float32_t T_delay = 5.5e-3F; // 500 micro-seconds of delay between control and actuation
 static float32_t angle_error;
 
-static float32_t Kp = 30 * 0.035; //30 * 0.035;
+static float32_t Kp = 40 * 0.035; //30 * 0.035;
 static float32_t Ti = 0.002029*1; //0.002029;
 static float32_t Td = 0.0F;
 static float32_t N = 1.0;
@@ -255,6 +288,10 @@ const float32_t ALPHA_F_HAT = Ts / (0.0032F + Ts);
 
 const float32_t ALPHA_IQ = Ts / (0.0008F + Ts);	 // Filter coefficient for Iq measurement (cutoff ~200 Hz);     
 
+static float32_t V_op = 0.5F;                                  
+static float32_t omega_op = 2.0F * PI * (0.5F / 0.5F);         
+static float32_t theta_op = 0.0F;
+//static bool vf_open_loop_mode = false;
 
 /* Decimation is used to limit the rate of measurement plotted in ScopeMimicry*/
 const static uint32_t decimation = 10;
@@ -292,13 +329,15 @@ uint8_t asked_mode = IDLEMODE;
 
 const uint16_t SCOPE_SIZE = 3000; //512;
 uint16_t k_app_idx;
-ScopeMimicry scope(SCOPE_SIZE, 6);
+ScopeMimicry scope(SCOPE_SIZE, 7);
 static bool is_downloading;
 static bool memory_print;
 
 bool mytrigger()
 {
 	return (control_state == POWER_ST);
+	//return (control_state == IDLE_ST || control_state == POWER_ST);
+
 	//return (current_step == true);
 	//return (I1_low_value > 1.0F);
 	
@@ -408,6 +447,12 @@ void init_filt_and_reg(void)
     f_hat = 0.0F;
     prev_angle_index = 255;
 	error_counter = 0;
+	eta[0] = 0.0F;
+	eta[1] = 0.0F;
+	eta[2] = 0.0F;
+	eta[3] = 0.0F;
+	i_alpha_ref_filtered =0;
+	i_beta_ref_filtered  =0;
 }
 
 /**
@@ -504,13 +549,15 @@ inline void get_position_and_speed()
 			ot_modulo_2pi(PI / 3.0 * sector[angle_index] +
 			PI * k_angle_offset / 24.0);
 
+	encoder_count = spin.timer.getIncrementalEncoderValue(TIMER3);
+
 	w_estimate = pulsation_estimator(sector[angle_index], counter_time * Ts);
 	pllDatas = pllangle.calculateWithReturn(hall_angle);
 
 	angle_filtered = pllDatas.angle;
 
 	/* Unwrap the electrical angle */
-	float32_t delta = theta_e_hat - angle_prev;
+	/* float32_t delta = theta_e_hat - angle_prev;
 
 	if (delta > PI) {
 		angle_elec_unwrapped -= 2.0F * PI;
@@ -523,6 +570,9 @@ inline void get_position_and_speed()
 	theta_m = angle_elec_unwrapped / pole_pairs;
 	omega_m = omega_e_hat / pole_pairs; // omega_e_hat / pole_pairs; // omega_m * 0.95F + (omega_e_hat / pole_pairs) * 0.05F;
 
+	theta_m_encoder =  2.0F * PI * (float32_t)(encoder_count) / (float32_t)ENCODER_COUNTS_PER_REV ;
+	theta_e_encoder = ot_modulo_2pi((pole_pairs * theta_m_encoder) + encoder_offset);
+ */
 	w_meas = w_mes_filter.calculateWithReturn(pllDatas.w);
 }
 
@@ -536,9 +586,12 @@ inline void overcurrent_mngt()
 	    I_high > DC_CURRENT_LIMIT) {
 		error_counter++;
 	}
-	if (error_counter > 2) {
-		control_state = ERROR_ST;
+	if ((counter_time % 1000) == 0 && error_counter > 0) {
+		error_counter--;
 	}
+ 	if (error_counter > 3) {
+		control_state = ERROR_ST;
+	} 
 }
 
 /**
@@ -554,30 +607,141 @@ inline void stop_pwm_and_reset_states_ifnot()
 	}
 }
 
+inline void control_torque_imc()
+{
+    // Clarke Transform
+    Iabc.a = I1_low_value;
+    Iabc.b = I2_low_value;
+    
+    i_alpha = Iabc.a;
+    i_beta = (Iabc.a + 2.0F * Iabc.b) / 1.73205081F; // sqrt(3)
+
+    // w_hall = phi * [-sin(hall_angle); cos(hall_angle)]
+    float32_t sin_hall = sinf(hall_angle);
+    float32_t cos_hall = cosf(hall_angle);
+    float32_t w_hall_alpha = PHI_IMC * (-sin_hall);
+    float32_t w_hall_beta  = PHI_IMC * (cos_hall);
+
+    // x_ref = (2 / (3 * phi^2 * n_p)) * tau_e_ref * w_hall
+    // We treat manual_Iq_ref as desired torque 
+    float32_t torque_coeff = (2.0F / (3.0F * PHI_IMC * PHI_IMC * pole_pairs)) * manual_Iq_ref;
+    
+    float32_t i_alpha_ref_raw = torque_coeff * w_hall_alpha;
+	float32_t i_beta_ref_raw = torque_coeff * w_hall_beta;
+
+    //saturation to i_alpha_ref and i_beta_ref 
+	if (i_alpha_ref_raw > I_MAX) i_alpha_ref_raw = I_MAX;
+	else if (i_alpha_ref_raw < -I_MAX) i_alpha_ref_raw = -I_MAX;
+
+	if (i_beta_ref_raw > I_MAX) i_beta_ref_raw = I_MAX;
+	else if (i_beta_ref_raw < -I_MAX) i_beta_ref_raw = -I_MAX;
+
+	const float32_t LPF_ALPHA = 1.0F;
+	i_alpha_ref_filtered += LPF_ALPHA * (i_alpha_ref_raw - i_alpha_ref_filtered);
+	i_beta_ref_filtered  += LPF_ALPHA * (i_beta_ref_raw  - i_beta_ref_filtered);
+    // 3. Compute Tracking Errors
+	e_alpha = i_alpha - i_alpha_ref_raw;
+    e_beta  = i_beta - i_beta_ref_raw;
+
+    // Compute Control Input (u = -(1 + |omega_e|) * K * [e; eta])
+   float32_t w_elec_bounded = fabs(w_meas);
+
+   if (w_elec_bounded < 10.0F) { 
+    	w_res = 0.0F;
+		}
+	if (w_elec_bounded > 100.0F) { 
+    	w_res = 100.0F;
+		}
+		else{
+			w_res = w_elec_bounded;
+		}
+	float32_t factor = 1.0F+ w_res; 
+
+	v_alpha = -factor * (cK[0][0]*e_alpha + cK[0][1]*e_beta + 
+						cK[0][2]*eta[0]  + cK[0][3]*eta[1] + 
+						cK[0][4]*eta[2]  + cK[0][5]*eta[3]);
+						
+	v_beta  = -factor * (cK[1][0]*e_alpha + cK[1][1]*e_beta + 
+						cK[1][2]*eta[0]  + cK[1][3]*eta[1] + 
+						cK[1][4]*eta[2]  + cK[1][5]*eta[3]);
+
+
+    // 5. Update Internal Model States (Euler Discretization)
+    // d_eta = factor * J2 * eta + G * e
+    float32_t d_eta0 = factor * (-eta[1]);
+    float32_t d_eta1 = factor * (eta[0]) + e_alpha;
+    float32_t d_eta2 = factor * (-eta[3]);
+    float32_t d_eta3 = factor * (eta[2]) + e_beta;
+
+    eta[0] += TS_IMC * d_eta0;
+    eta[1] += TS_IMC * d_eta1;
+    eta[2] += TS_IMC * d_eta2;
+    eta[3] += TS_IMC * d_eta3;
+
+ 	float32_t v_max = 0.45F * V_high_filtered;
+	float32_t v_mag = sqrtf(v_alpha * v_alpha + v_beta * v_beta);
+
+	if (v_mag > v_max) {
+		float32_t v_scale = v_max / v_mag;
+		v_alpha *= v_scale;
+		v_beta  *= v_scale;
+	
+		// If voltage is saturated, stop the internal model from integrating further
+		eta[0] -= TS_IMC * d_eta0;
+		eta[1] -= TS_IMC * d_eta1;
+		eta[2] -= TS_IMC * d_eta2;
+		eta[3] -= TS_IMC * d_eta3;
+	} 
+
+    // 6. Inverse Clarke Transform (alpha-beta to abc)
+    Vabc.a = v_alpha;
+    Vabc.b = -0.5F * v_alpha + 0.86602540F * v_beta;
+    Vabc.c = -0.5F * v_alpha - 0.86602540F * v_beta;
+}
+
 /**
  * Performs Torque control using Field Oriented Control algorithm
  */
+
 inline void control_torque()
 {
-	angle_4_control = theta_e_hat; //angle_filtered; // hall_angle
+/* 	if (vf_open_loop_mode) {
+        theta_op += omega_op * Ts;
+        theta_op = ot_modulo_2pi(theta_op);
+
+        Vabc.a = V_op * cosf(theta_op);
+        Vabc.b = V_op * cosf(theta_op - 2.0F * PI / 3.0F);
+        Vabc.c = V_op * cosf(theta_op + 2.0F * PI / 3.0F);
+
+        angle_4_control = theta_e_encoder;
+        Iabc.a = I1_low_value;
+        Iabc.b = I2_low_value;
+        Iabc.c = -(Iabc.a + Iabc.b);
+        Idq = Transform::to_dqo(Iabc, angle_4_control);
+
+        return;   
+    } */
+	angle_4_control = theta_e_encoder; //theta_e_hat; //angle_filtered; // hall_angle;
+	//float32_t pos_error = theta_m_ref - theta_m_encoder;
+	//Iq_ref_pos = Kp_pos * pos_error - Kd_pos * (w_meas / pole_pairs);
 	//q_angle = atan2(q_beta, q_alpha);
 	//angle_4_control = ot_modulo_2pi(angle_filtered + w_meas * T_delay); //angle_filtered; // hall_angle
 	//Iq_ref_pos = -5.2 * (angle_4_control - theta_m_ref) - 2.3* w_meas; 
 	//float32_t omega_m_dump = w_meas / pole_pairs;
 	//int_pos += Ts * (theta_m - theta_m_ref) * anti_windup;
 	//Iq_ref_pos = Ki_pos * int_pos + Kp_pos * theta_m + Kd_pos * omega_m;
-/*	if (Iq_ref_pos > 3.0F) Iq_ref_pos = 3.0F;
-	else if (Iq_ref_pos < -3.0F) Iq_ref_pos = -3.0F; */
-	Idq_ref.q = Iq_ref_pos;
-	//Idq_ref.q = manual_Iq_ref;
+	//if (Iq_ref_pos > 3.0F) Iq_ref_pos = 3.0F;
+	//else if (Iq_ref_pos < -3.0F) Iq_ref_pos = -3.0F; 
+	//Idq_ref.q = Iq_ref_pos;
+	Idq_ref.q = manual_Iq_ref;
 	
-	
+	/*
 	angle_error = hall_angle - theta_e_hat;
 	if (angle_error > PI) {
 		angle_error -= 2.0F * PI;
 	} else if (angle_error < -PI) {
 		angle_error += 2.0F * PI;
-	}
+	}*/
 
 	/* Saturation */
 	if (Idq_ref.q > Iq_max) {
@@ -619,8 +783,13 @@ inline void control_torque()
 	pi_q_integral = pi_q.getIntegral();
 
 	Vabc = Transform::to_threephase(Vdq, angle_4_control);
+/*
+	theta_op += omega_op * Ts;
+	theta_op = ot_modulo_2pi(theta_op);
+	Vabc.a = V_op * cosf(theta_op);
+	Vabc.b = V_op * cosf(theta_op - 2.0F * PI / 3.0F);
+	Vabc.c = V_op * cosf(theta_op - 4.0F * PI / 3.0F);*/
 }
-
 /**
  * Helper function that computes duty cycles from ABC frame.
  */
@@ -628,6 +797,7 @@ inline void compute_duties()
 {
 	inverse_Vhigh = 1.0 / V_high_filtered; //V_high_filtered; // MIN_DC_VOLTAGE
 	duty_abc.a = (Vabc.a * inverse_Vhigh + 0.5);
+	//duty_abc.a = 0.8F;
 	duty_abc.b = (Vabc.b * inverse_Vhigh + 0.5);
 	duty_abc.c = (Vabc.c * inverse_Vhigh + 0.5);
 }
@@ -762,23 +932,33 @@ void setup_routine()
 	spin.gpio.configurePin(HALL2, INPUT);
 	spin.gpio.configurePin(HALL3, INPUT);
 
+	spin.timer.startLogIncrementalEncoder(TIMER3);
+
 	/* Scope configuration */
+	scope.connectChannel(Va, "Va");                       /* 0 */
+	scope.connectChannel(Vb, "Vb");                       /* 0 */
+	//scope.connectChannel(Vc, "Vc");                       /* 0 */
 	//scope.connectChannel(V12_value, "V12_value");           /* 0 */
 	//scope.connectChannel(Vq, "Vq");                         /* 1 */
 	//scope.connectChannel(Vd, "Vd");                         /* 2 */
 	//scope.connectChannel(I1_low_value, "I1_low_value");     /* 3 */
 	//scope.connectChannel(I2_low_value, "I2_low_value");     /* 4 */
 	//scope.connectChannel(I_high, "I_high_value");     	    /* 5 */
-	scope.connectChannel(Iq_meas, "Iq_meas");               /* 6 */
+	scope.connectChannel(i_alpha_ref_filtered,"i_alpha_ref_filtered");
+	scope.connectChannel(i_beta_ref_filtered,"i_beta_ref_filtered");
+	//scope.connectChannel(Iq_meas, "Iq_meas");               /* 6 */
 	scope.connectChannel(Iq_ref, "Iq_ref");                 /* 7 */
 	//scope.connectChannel(Id_meas, "Id_meas");             /* 8 */
+	//scope.connectChannel(Iabc.a, "Ia");
+	//scope.connectChannel(Iabc.b, "Ib");
 	//scope.connectChannel(angle_filtered, "angle_filtered"); /* 9 */
-	scope.connectChannel(theta_e_hat, "theta_e_hat");               /* 9 */
+	//scope.connectChannel(theta_e_encoder, "theta_e_encoder");               /* 9 */
 	//scope.connectChannel(Ib_ref, "Ib_ref");                 /* 10 */
 	scope.connectChannel(hall_angle, "hall_angle");         /* 11 */
+	scope.connectChannel(theta_e_hat, "theta_e_hat"); 
 	//scope.connectChannel(Ia_ref, "Ia_ref");                 /* 12 */
-	scope.connectChannel(control_state_f, "control_state"); /* 13 */
-	scope.connectChannel(angle_error, "angle_error");     /* 14 */
+	//scope.connectChannel(control_state_f, "control_state"); /* 13 */
+	//scope.connectChannel(angle_error, "angle_error");     /* 14 */
 	//scope.connectChannel(pi_d_integral_f, "pi_d_integral");     /* 14 */
 	//scope.connectChannel(pi_q_integral_f, "pi_q_integral");     /* 15 */
 	//scope.connectChannel(duty_a, "duty_a");                 /* 16 */
@@ -845,20 +1025,38 @@ void loop_background_task()
 		break;
 	case 'u':
 	{
-		theta_m_ref += 0.5F;
-		//manual_Iq_ref += 1.0F;
+		//theta_m_ref += 0.5F;
+		manual_Iq_ref += 0.1F;
+		//V_op += 0.5;
+		//omega_op = 2.0F * PI * (V_op / 0.5F);
 		break;
 		}
 	case 'd':
-		theta_m_ref -= 0.5F;
-		//manual_Iq_ref = 0.0F;
+		//theta_m_ref -= 0.5F;
+		manual_Iq_ref -= 0.1F;
+		//V_op -= 0.5F;
+		//if (V_op < 0.5F) V_op = 0.5F;
+    	//omega_op = 2.0F * PI * (V_op / 0.5F);
 		break;
 	case 's':
 		//theta_m_ref = 0.0F;
 		//manual_Iq_ref = 2.0F;
 		Iq_ref_pos = 2.0F;
-
 		break;
+/* 	case 'v':
+    	vf_open_loop_mode = !vf_open_loop_mode;
+    	theta_op = 0.0F;   // reset
+    	pi_d.reset();
+    	pi_q.reset();
+   		printk("vf mode = %d\n", vf_open_loop_mode);
+    	break; */
+
+	case 't':   // test encoder
+    {
+        int32_t cnt = (int32_t)spin.timer.getIncrementalEncoderValue(TIMER3);
+        printk("encoder_count = %d\n", cnt);
+    }
+    break;
 	case 'm':
 		/* To print scope datas in ownplot as soon as possible */
 		memory_print = !memory_print;
@@ -878,17 +1076,23 @@ void application_task()
 {
 	if (!memory_print) {
 		printk("%7.2f:", V_high);
+		printk("%7.2f:", Vabc.a);
+		printk("%7.2f:", Iabc.a);
 		//printk("%7.2f:", k_angle_offset);
 		printk("%7.2f:", Iq_max);
-		//printk("%7.2f:", manual_Iq_ref);
+		printk("%7.2f:", manual_Iq_ref);
+		//printk("%7.2f:", V_op);
 		//printk("%7.2f:", I1_offset);
-		printk("%7.2f:", theta_m);
-		printk("%7.2f:", theta_m_ref);
-		printk("%7.2f:", Iq_ref_pos);
+		//printk("%7.2f:", theta_m);
+		//printk("%7.2f:", theta_m_ref);
+		//printk("%7.2f:", Iq_ref_pos);
 		//printk("%7.2f:", recieved_Iq_f);
 		//printk("%7.2f:", I_high);
+		printk("%7.2f:", w_meas);
+		printk("%7.2f:", w_res);
 		//printk("%7.2f:", I1_low_value);
 		//printk("%7.2f:", I2_low_value);
+		//printk("%7.2f:", I_high);
 		printk("%7.2f:", Idq.q);
 		//printk("%7.2f:", pi_d_integral);
 		//printk("%7.2f:", pi_q_integral);
@@ -938,6 +1142,7 @@ void application_task()
 
 	case IDLE_ST:
 		if ((asked_mode == POWERMODE) && (V_high_filtered > V_HIGH_MIN)) {
+			/*
 			theta_e_hat = hall_angle;       
         	omega_e_hat = 0.0F; //0.0F;
         	f_hat = 0.0F;
@@ -949,7 +1154,7 @@ void application_task()
 			omega_m = 0.0F;
 
 			theta_m_ref = theta_m; // Set position reference to current position to avoid jumps at startup
-
+			*/
 			control_state = POWER_ST;
 		}
 		break;
@@ -986,7 +1191,7 @@ void loop_critical_task()
 
 	//run_S1_observer();
 
-	//run_disturbance_observer();
+	run_disturbance_observer();
 
 	overcurrent_mngt();
 
@@ -1003,7 +1208,7 @@ void loop_critical_task()
 	case POWER_ST:
 		/* Control loop is executed here */
 
-		control_torque();
+		control_torque_imc();
 		run_disturbance_observer();
 		compute_duties();
 		apply_duties();
@@ -1015,6 +1220,8 @@ void loop_critical_task()
 	if (counter_time % decimation == 0) {
 		angle_index_f = angle_index;
 		Va = Vabc.a;
+		Vb = Vabc.b;
+		Vc = Vabc.c;
 		duty_a = duty_abc.a;
 		duty_b = duty_abc.b;
 		Iq_ref = Idq_ref.q;
