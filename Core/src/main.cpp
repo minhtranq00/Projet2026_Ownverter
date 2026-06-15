@@ -116,13 +116,16 @@ static const float32_t PHI_IMC = 0.12F;
 static const float32_t I_MAX = 5.0F;
 /* Pre-computed Gain Matrix from Julia (cK) */
 static const float32_t cK[2][6] = {
-	{ 0.0045F, 0.0F, -1.6595F, 0.6725F, 0.0F, 0.0F },
-	{ 0.0F,    0.0045F, 0.0F, 0.0F, -1.6595F, 0.6725F }
+	{ 0.0036F, 0.0F, -1.057F, 0.53F, 0.0F, 0.0F },
+	{ 0.0F,    0.0036F, 0.0F, 0.0F, -1.057F, 0.53F }
 };
 static float32_t i_alpha_ref_filtered = 0.0F;
 static float32_t i_beta_ref_filtered  = 0.0F;
 static float32_t w_res = 0.0F; 
-static float32_t w_elec_bounded;
+static float32_t w_elec_bounded = 0.0F;
+static float32_t i_alpha_ref_raw = 0.0F;
+static float32_t i_beta_ref_raw = 0.0F;
+static float32_t v_bet;
 /* Hall effect sensors */
 static uint8_t HALL1_value;
 static uint8_t HALL2_value;
@@ -328,9 +331,9 @@ uint8_t asked_mode = IDLEMODE;
  *  using ScopeMimicry.
  */
 
-const uint16_t SCOPE_SIZE = 3000; //512;
+const uint16_t SCOPE_SIZE = 1000; //512;
 uint16_t k_app_idx;
-ScopeMimicry scope(SCOPE_SIZE, 7);
+ScopeMimicry scope(SCOPE_SIZE, 10);
 static bool is_downloading;
 static bool memory_print;
 
@@ -551,7 +554,7 @@ inline void get_position_and_speed()
 	angle_index = HALL1_value * 1 + HALL2_value * 2 + HALL3_value * 4;
 
 	hall_angle =
-			ot_modulo_2pi(PI / 3.0 * sector[angle_index] +
+			ot_modulo_2pi(PI / 6.0 * sector[angle_index] +
 			PI * k_angle_offset / 24.0);
 
 	encoder_count = spin.timer.getIncrementalEncoderValue(TIMER3);
@@ -617,13 +620,14 @@ inline void control_torque_imc()
     // Clarke Transform
     Iabc.a = I1_low_value;
     Iabc.b = I2_low_value;
-    
+
     i_alpha = Iabc.a;
     i_beta = (Iabc.a + 2.0F * Iabc.b) / 1.73205081F; // sqrt(3)
+	v_bet = (V1_low_value + 2.0F * V2_low_value) / 1.73205081F;
 
     // w_hall = phi * [-sin(hall_angle); cos(hall_angle)]
-    float32_t sin_hall = sinf(hall_angle);
-    float32_t cos_hall = cosf(hall_angle);
+    float32_t sin_hall = sinf(theta_e_hat);
+    float32_t cos_hall = cosf(theta_e_hat);
     float32_t w_hall_alpha = PHI_IMC * (-sin_hall);
     float32_t w_hall_beta  = PHI_IMC * (cos_hall);
 
@@ -641,12 +645,12 @@ inline void control_torque_imc()
 	if (i_beta_ref_raw > I_MAX) i_beta_ref_raw = I_MAX;
 	else if (i_beta_ref_raw < -I_MAX) i_beta_ref_raw = -I_MAX;
 
-	const float32_t LPF_ALPHA = 0.1F;
+	/*const float32_t LPF_ALPHA = 0.1F;
 	i_alpha_ref_filtered += LPF_ALPHA * (i_alpha_ref_raw - i_alpha_ref_filtered);
-	i_beta_ref_filtered  += LPF_ALPHA * (i_beta_ref_raw  - i_beta_ref_filtered);
+	i_beta_ref_filtered  += LPF_ALPHA * (i_beta_ref_raw  - i_beta_ref_filtered);*/
     // 3. Compute Tracking Errors
-	e_alpha = i_alpha - i_alpha_ref_filtered;
-    e_beta  = i_beta - i_beta_ref_filtered;
+	e_alpha = i_alpha - i_alpha_ref_raw;
+    e_beta  = i_beta - i_beta_ref_raw;
 
     // Compute Control Input (u = -(1 + |omega_e|) * K * [e; eta])
    	float32_t w_elec_bounded = fabs(omega_e_hat);
@@ -932,19 +936,24 @@ void setup_routine()
 	spin.timer.startLogIncrementalEncoder(TIMER3);
 
 	/* Scope configuration */
-	scope.connectChannel(Va, "Va");                       /* 0 */
-	scope.connectChannel(Vb, "Vb");                       /* 0 */
+	scope.connectChannel(V1_low_value, "V1_low_value");                       /* 0 */
+	scope.connectChannel(v_bet, "V_bet");                       /* 0 */
+	scope.connectChannel(Va, "Va");
+	scope.connectChannel(Vb, "Vb");
 	//scope.connectChannel(Vc, "Vc");                       /* 0 */
 	//scope.connectChannel(V12_value, "V12_value");           /* 0 */
 	//scope.connectChannel(Vq, "Vq");                         /* 1 */
 	//scope.connectChannel(Vd, "Vd");                         /* 2 */
-	scope.connectChannel(I1_low_value, "I1_low_value");     /* 3 */
-	scope.connectChannel(I2_low_value, "I2_low_value");     /* 4 */
+	//scope.connectChannel(I1_low_value, "I1_low_value");     /* 3 */
+	//scope.connectChannel(I2_low_value, "I2_low_value");     /* 4 */
 	//scope.connectChannel(I_high, "I_high_value");     	    /* 5 */
-	//scope.connectChannel(i_alpha_ref_filtered,"i_alpha_ref_filtered");
+	scope.connectChannel(i_alpha_ref_raw, "i_alpha_ref_raw");
+	scope.connectChannel(i_alpha,"i_alpha");
+	scope.connectChannel(i_beta_ref_raw, "i_beta_ref_raw");
+	scope.connectChannel(i_beta,"i_beta");
 	//scope.connectChannel(i_beta_ref_filtered,"i_beta_ref_filtered");
 	//scope.connectChannel(Iq_meas, "Iq_meas");               /* 6 */
-	scope.connectChannel(Iq_ref, "Iq_ref");                 /* 7 */
+	//scope.connectChannel(Iq_ref, "Iq_ref");                 /* 7 */
 	//scope.connectChannel(Id_meas, "Id_meas");             /* 8 */
 	//scope.connectChannel(Iabc.a, "Ia");
 	//scope.connectChannel(Iabc.b, "Ib");
@@ -1085,8 +1094,8 @@ void application_task()
 		//printk("%7.2f:", Iq_ref_pos);
 		//printk("%7.2f:", recieved_Iq_f);
 		//printk("%7.2f:", I_high);
-		printk("%7.2f:", omega_e_hat);
-		printk("%7.2f:", w_elec_bounded);
+		printk("%7.2f:", i_alpha_ref_raw);
+		printk("%7.2f:", i_alpha_ref_filtered);
 		//printk("%7.2f:", I1_low_value);
 		//printk("%7.2f:", I2_low_value);
 		//printk("%7.2f:", I_high);
