@@ -145,9 +145,9 @@ static uint32_t trigger_counter = 0;
  * One sector for one index value
  * Index = H1*2^0 + H2*2^1 + H3*2^2
  */
-//static int16_t sector[] = {-1, 5, 1, 0, 3, 4, 2};
-static int16_t sector[] = {-1, 2, 4, 3, 0, 1, 5};
-static float32_t k_angle_offset = PI/6.0F; //0.0F;
+static int16_t sector[] = {-1, 5, 1, 0, 3, 4, 2};
+//static int16_t sector[] = {-1, 2, 4, 3, 0, 1, 5};
+static float32_t k_angle_offset = - 2.0F * PI / 3.0F; //0.0F;
 
 /* Power LEG measures */
 static float32_t meas_data;
@@ -331,9 +331,9 @@ uint8_t asked_mode = IDLEMODE;
  *  using ScopeMimicry.
  */
 
-const uint16_t SCOPE_SIZE = 1000; //512;
+const uint16_t SCOPE_SIZE = 3000; //512;
 uint16_t k_app_idx;
-ScopeMimicry scope(SCOPE_SIZE, 10);
+ScopeMimicry scope(SCOPE_SIZE, 4);
 static bool is_downloading;
 static bool memory_print;
 
@@ -417,7 +417,7 @@ inline void run_disturbance_observer()
 			theta_e_hat = hall_angle;
 			omega_e_hat = 0.0F;
 			f_hat = 0.0F;
-        } else if (angle_index >= 1 && angle_index <= 6) {
+		}else if (angle_index >= 1 && angle_index <= 6) {
 		//if (angle_index != prev_angle_index && angle_index >= 1 && angle_index <= 6) {
             float32_t e = hall_angle - theta_e_hat;
             if (e > PI)       e -= 2.0F * PI;
@@ -555,7 +555,7 @@ inline void get_position_and_speed()
 
 	hall_angle =
 			ot_modulo_2pi(PI / 6.0 * sector[angle_index] +
-			PI * k_angle_offset / 24.0);
+			k_angle_offset);
 
 	encoder_count = spin.timer.getIncrementalEncoderValue(TIMER3);
 
@@ -626,8 +626,8 @@ inline void control_torque_imc()
 	v_bet = (V1_low_value + 2.0F * V2_low_value) / 1.73205081F;
 
     // w_hall = phi * [-sin(hall_angle); cos(hall_angle)]
-    float32_t sin_hall = sinf(theta_e_hat);
-    float32_t cos_hall = cosf(theta_e_hat);
+    float32_t sin_hall = sinf(hall_angle + PI/2.0F);
+    float32_t cos_hall = cosf(hall_angle + PI/2.0F);
     float32_t w_hall_alpha = PHI_IMC * (-sin_hall);
     float32_t w_hall_beta  = PHI_IMC * (cos_hall);
 
@@ -695,9 +695,13 @@ inline void control_torque_imc()
 	} 
 
     // 6. Inverse Clarke Transform (alpha-beta to abc)
-    Vabc.a = v_alpha;
+	Vabc.a = v_alpha;
     Vabc.b = -0.5F * v_alpha + 0.86602540F * v_beta;
-    Vabc.c = -0.5F * v_alpha - 0.86602540F * v_beta;
+    Vabc.c = -0.5F * v_alpha - 0.86602540F * v_beta; 
+
+/* 	Vabc.a = manual_Iq_ref;
+	Vabc.b = 0.0F;
+	Vabc.c = 0.0F; */
 }
 
 /**
@@ -722,7 +726,7 @@ inline void control_torque()
 
         return;   
     } */
-	angle_4_control = theta_e_encoder; //theta_e_hat; //angle_filtered; // hall_angle;
+	angle_4_control = angle_filtered + PI/2.0F; //theta_e_hat; //angle_filtered; // hall_angle;
 	//float32_t pos_error = theta_m_ref - theta_m_encoder;
 	//Iq_ref_pos = Kp_pos * pos_error - Kd_pos * (w_meas / pole_pairs);
 	//q_angle = atan2(q_beta, q_alpha);
@@ -936,10 +940,13 @@ void setup_routine()
 	spin.timer.startLogIncrementalEncoder(TIMER3);
 
 	/* Scope configuration */
-	scope.connectChannel(V1_low_value, "V1_low_value");                       /* 0 */
-	scope.connectChannel(v_bet, "V_bet");                       /* 0 */
-	scope.connectChannel(Va, "Va");
-	scope.connectChannel(Vb, "Vb");
+	//scope.connectChannel(V1_low_value, "V1_low_value");                       /* 0 */
+	//scope.connectChannel(V2_low_value, "V2_low_value");                       /* 0 */
+	//scope.connectChannel(HALL1_value_f, "HALL1");
+	//scope.connectChannel(HALL2_value_f, "HALL2");
+	//scope.connectChannel(HALL3_value_f, "HALL3");
+	//scope.connectChannel(Va, "Va");
+	//scope.connectChannel(Vb, "Vb");
 	//scope.connectChannel(Vc, "Vc");                       /* 0 */
 	//scope.connectChannel(V12_value, "V12_value");           /* 0 */
 	//scope.connectChannel(Vq, "Vq");                         /* 1 */
@@ -947,21 +954,21 @@ void setup_routine()
 	//scope.connectChannel(I1_low_value, "I1_low_value");     /* 3 */
 	//scope.connectChannel(I2_low_value, "I2_low_value");     /* 4 */
 	//scope.connectChannel(I_high, "I_high_value");     	    /* 5 */
-	scope.connectChannel(i_alpha_ref_raw, "i_alpha_ref_raw");
-	scope.connectChannel(i_alpha,"i_alpha");
-	scope.connectChannel(i_beta_ref_raw, "i_beta_ref_raw");
-	scope.connectChannel(i_beta,"i_beta");
+	//scope.connectChannel(i_alpha_ref_raw, "i_alpha_ref_raw");
+	//scope.connectChannel(i_alpha,"i_alpha");
+	//scope.connectChannel(i_beta_ref_raw, "i_beta_ref_raw");
+	//scope.connectChannel(i_beta,"i_beta");
 	//scope.connectChannel(i_beta_ref_filtered,"i_beta_ref_filtered");
-	//scope.connectChannel(Iq_meas, "Iq_meas");               /* 6 */
-	//scope.connectChannel(Iq_ref, "Iq_ref");                 /* 7 */
+	scope.connectChannel(Iq_meas, "Iq_meas");               /* 6 */
+	scope.connectChannel(Iq_ref, "Iq_ref");                 /* 7 */
 	//scope.connectChannel(Id_meas, "Id_meas");             /* 8 */
 	//scope.connectChannel(Iabc.a, "Ia");
 	//scope.connectChannel(Iabc.b, "Ib");
-	//scope.connectChannel(angle_filtered, "angle_filtered"); /* 9 */
+	scope.connectChannel(angle_filtered, "angle_filtered"); /* 9 */
 	//scope.connectChannel(theta_e_encoder, "theta_e_encoder");               /* 9 */
 	//scope.connectChannel(Ib_ref, "Ib_ref");                 /* 10 */
 	scope.connectChannel(hall_angle, "hall_angle");         /* 11 */
-	scope.connectChannel(theta_e_hat, "theta_e_hat"); 
+	//scope.connectChannel(theta_e_hat, "theta_e_hat"); 
 	//scope.connectChannel(Ia_ref, "Ia_ref");                 /* 12 */
 	//scope.connectChannel(control_state_f, "control_state"); /* 13 */
 	//scope.connectChannel(angle_error, "angle_error");     /* 14 */
@@ -1149,6 +1156,7 @@ void application_task()
 	case IDLE_ST:
 		if ((asked_mode == POWERMODE) && (V_high_filtered > V_HIGH_MIN)) {
 			
+			
 			theta_e_hat = hall_angle;       
         	omega_e_hat = 0.0F; //0.0F;
         	f_hat = 0.0F;
@@ -1214,7 +1222,7 @@ void loop_critical_task()
 	case POWER_ST:
 		/* Control loop is executed here */
 
-		control_torque_imc();
+		control_torque();
 		//run_disturbance_observer();
 		compute_duties();
 		apply_duties();
@@ -1239,8 +1247,8 @@ void loop_critical_task()
 		Ia_ref = Iabc_ref.a;
 		Ib_ref = Iabc_ref.b;
 		counter_time_f = (float32_t)counter_time;
-		HALL1_value_f = HALL1_value;
-		HALL2_value_f = HALL2_value;
+		HALL1_value_f = HALL1_value * 1.1F;
+		HALL2_value_f = HALL2_value * 1.2F;
 		HALL3_value_f = HALL3_value;
 		control_state_f = control_state;
 		pi_d_integral_f = pi_d_integral;
