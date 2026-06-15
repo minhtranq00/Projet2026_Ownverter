@@ -116,12 +116,13 @@ static const float32_t PHI_IMC = 0.12F;
 static const float32_t I_MAX = 5.0F;
 /* Pre-computed Gain Matrix from Julia (cK) */
 static const float32_t cK[2][6] = {
-    { 0.0045F  , 0.0F,     -1.6595F, 0.6725F, 0.0F,        0.0F      },
-    { 0.0F,     0.0045F,  0.0F,       0.0F,     -1.6595F,   0.6725F }
+	{ 0.0045F, 0.0F, -1.6595F, 0.6725F, 0.0F, 0.0F },
+	{ 0.0F,    0.0045F, 0.0F, 0.0F, -1.6595F, 0.6725F }
 };
 static float32_t i_alpha_ref_filtered = 0.0F;
 static float32_t i_beta_ref_filtered  = 0.0F;
 static float32_t w_res = 0.0F; 
+static float32_t w_elec_bounded;
 /* Hall effect sensors */
 static uint8_t HALL1_value;
 static uint8_t HALL2_value;
@@ -636,26 +637,18 @@ inline void control_torque_imc()
 	if (i_beta_ref_raw > I_MAX) i_beta_ref_raw = I_MAX;
 	else if (i_beta_ref_raw < -I_MAX) i_beta_ref_raw = -I_MAX;
 
-	const float32_t LPF_ALPHA = 1.0F;
+	const float32_t LPF_ALPHA = 0.1F;
 	i_alpha_ref_filtered += LPF_ALPHA * (i_alpha_ref_raw - i_alpha_ref_filtered);
 	i_beta_ref_filtered  += LPF_ALPHA * (i_beta_ref_raw  - i_beta_ref_filtered);
     // 3. Compute Tracking Errors
-	e_alpha = i_alpha - i_alpha_ref_raw;
-    e_beta  = i_beta - i_beta_ref_raw;
+	e_alpha = i_alpha - i_alpha_ref_filtered;
+    e_beta  = i_beta - i_beta_ref_filtered;
 
     // Compute Control Input (u = -(1 + |omega_e|) * K * [e; eta])
-   float32_t w_elec_bounded = fabs(w_meas);
+   	float32_t w_elec_bounded = fabs(omega_e_hat);
 
-   if (w_elec_bounded < 10.0F) { 
-    	w_res = 0.0F;
-		}
-	if (w_elec_bounded > 100.0F) { 
-    	w_res = 100.0F;
-		}
-		else{
-			w_res = w_elec_bounded;
-		}
-	float32_t factor = 1.0F+ w_res; 
+	if (w_elec_bounded > 100.0F) w_elec_bounded = 100.0F;
+	float32_t factor = 1.0F + w_elec_bounded;
 
 	v_alpha = -factor * (cK[0][0]*e_alpha + cK[0][1]*e_beta + 
 						cK[0][2]*eta[0]  + cK[0][3]*eta[1] + 
@@ -1088,8 +1081,8 @@ void application_task()
 		//printk("%7.2f:", Iq_ref_pos);
 		//printk("%7.2f:", recieved_Iq_f);
 		//printk("%7.2f:", I_high);
-		printk("%7.2f:", w_meas);
-		printk("%7.2f:", w_res);
+		printk("%7.2f:", omega_e_hat);
+		printk("%7.2f:", w_elec_bounded);
 		//printk("%7.2f:", I1_low_value);
 		//printk("%7.2f:", I2_low_value);
 		//printk("%7.2f:", I_high);
@@ -1249,4 +1242,3 @@ int main(void)
 
 	return 0;
 }
-
