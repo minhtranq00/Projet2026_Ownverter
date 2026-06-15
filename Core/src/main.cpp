@@ -410,7 +410,11 @@ inline void run_disturbance_observer()
      * ----------------------------------------------------------------*/
 	
    if (angle_index != prev_angle_index) {
-        if (prev_angle_index != 255 && angle_index >= 1 && angle_index <= 6) {
+		if (prev_angle_index == 255) {
+			theta_e_hat = hall_angle;
+			omega_e_hat = 0.0F;
+			f_hat = 0.0F;
+        } else if (angle_index >= 1 && angle_index <= 6) {
 		//if (angle_index != prev_angle_index && angle_index >= 1 && angle_index <= 6) {
             float32_t e = hall_angle - theta_e_hat;
             if (e > PI)       e -= 2.0F * PI;
@@ -934,11 +938,11 @@ void setup_routine()
 	//scope.connectChannel(V12_value, "V12_value");           /* 0 */
 	//scope.connectChannel(Vq, "Vq");                         /* 1 */
 	//scope.connectChannel(Vd, "Vd");                         /* 2 */
-	//scope.connectChannel(I1_low_value, "I1_low_value");     /* 3 */
-	//scope.connectChannel(I2_low_value, "I2_low_value");     /* 4 */
+	scope.connectChannel(I1_low_value, "I1_low_value");     /* 3 */
+	scope.connectChannel(I2_low_value, "I2_low_value");     /* 4 */
 	//scope.connectChannel(I_high, "I_high_value");     	    /* 5 */
-	scope.connectChannel(i_alpha_ref_filtered,"i_alpha_ref_filtered");
-	scope.connectChannel(i_beta_ref_filtered,"i_beta_ref_filtered");
+	//scope.connectChannel(i_alpha_ref_filtered,"i_alpha_ref_filtered");
+	//scope.connectChannel(i_beta_ref_filtered,"i_beta_ref_filtered");
 	//scope.connectChannel(Iq_meas, "Iq_meas");               /* 6 */
 	scope.connectChannel(Iq_ref, "Iq_ref");                 /* 7 */
 	//scope.connectChannel(Id_meas, "Id_meas");             /* 8 */
@@ -1135,12 +1139,12 @@ void application_task()
 
 	case IDLE_ST:
 		if ((asked_mode == POWERMODE) && (V_high_filtered > V_HIGH_MIN)) {
-			/*
+			
 			theta_e_hat = hall_angle;       
         	omega_e_hat = 0.0F; //0.0F;
         	f_hat = 0.0F;
 			prev_angle_index = 255;
-
+			/*
 			angle_prev = hall_angle;
 			angle_elec_unwrapped = (float32_t)hall_angle;
 			theta_m = angle_elec_unwrapped / pole_pairs;
@@ -1202,7 +1206,7 @@ void loop_critical_task()
 		/* Control loop is executed here */
 
 		control_torque_imc();
-		run_disturbance_observer();
+		//run_disturbance_observer();
 		compute_duties();
 		apply_duties();
 		start_pwms_ifnot();
