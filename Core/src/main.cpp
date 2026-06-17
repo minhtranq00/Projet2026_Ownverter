@@ -147,7 +147,7 @@ static uint32_t trigger_counter = 0;
  */
 static int16_t sector[] = {-1, 5, 1, 0, 3, 4, 2};
 //static int16_t sector[] = {-1, 2, 4, 3, 0, 1, 5};
-static float32_t k_angle_offset = - 2.0F * PI / 3.0F; //0.0F;
+static float32_t k_angle_offset = -PI/2; //0.0F;
 
 /* Power LEG measures */
 static float32_t meas_data;
@@ -189,6 +189,7 @@ static float32_t Vc;
 static float32_t Iq_meas;
 static float32_t Id_meas;
 static float32_t Iq_ref;
+static float32_t Id_ref;
 static float32_t Iq_max;
 static float32_t Vd, Vq;
 static float32_t HALL1_value_f;
@@ -333,7 +334,7 @@ uint8_t asked_mode = IDLEMODE;
 
 const uint16_t SCOPE_SIZE = 3000; //512;
 uint16_t k_app_idx;
-ScopeMimicry scope(SCOPE_SIZE, 4);
+ScopeMimicry scope(SCOPE_SIZE, 6);
 static bool is_downloading;
 static bool memory_print;
 
@@ -726,7 +727,7 @@ inline void control_torque()
 
         return;   
     } */
-	angle_4_control = angle_filtered + PI/2.0F; //theta_e_hat; //angle_filtered; // hall_angle;
+	angle_4_control = angle_filtered; //theta_e_hat; //angle_filtered; // hall_angle;
 	//float32_t pos_error = theta_m_ref - theta_m_encoder;
 	//Iq_ref_pos = Kp_pos * pos_error - Kd_pos * (w_meas / pole_pairs);
 	//q_angle = atan2(q_beta, q_alpha);
@@ -961,7 +962,8 @@ void setup_routine()
 	//scope.connectChannel(i_beta_ref_filtered,"i_beta_ref_filtered");
 	scope.connectChannel(Iq_meas, "Iq_meas");               /* 6 */
 	scope.connectChannel(Iq_ref, "Iq_ref");                 /* 7 */
-	//scope.connectChannel(Id_meas, "Id_meas");             /* 8 */
+	scope.connectChannel(Id_meas, "Id_meas");             /* 8 */
+	scope.connectChannel(Id_ref, "Id_ref");
 	//scope.connectChannel(Iabc.a, "Ia");
 	//scope.connectChannel(Iabc.b, "Ib");
 	scope.connectChannel(angle_filtered, "angle_filtered"); /* 9 */
@@ -1039,14 +1041,14 @@ void loop_background_task()
 	case 'u':
 	{
 		//theta_m_ref += 0.5F;
-		manual_Iq_ref += 0.1F;
+		manual_Iq_ref += 2.0F;
 		//V_op += 0.5;
 		//omega_op = 2.0F * PI * (V_op / 0.5F);
 		break;
 		}
 	case 'd':
 		//theta_m_ref -= 0.5F;
-		manual_Iq_ref -= 0.1F;
+		manual_Iq_ref -= 2.0F;
 		//V_op -= 0.5F;
 		//if (V_op < 0.5F) V_op = 0.5F;
     	//omega_op = 2.0F * PI * (V_op / 0.5F);
@@ -1089,9 +1091,11 @@ void application_task()
 {
 	if (!memory_print) {
 		printk("%7.2f:", V_high);
-		printk("%7.2f:", Vabc.a);
-		printk("%7.2f:", Iabc.a);
-		//printk("%7.2f:", k_angle_offset);
+		//printk("%7.2f:", Vabc.a);
+		//printk("%7.2f:", Iabc.a);
+		printk("%7.2f:", angle_filtered);
+		printk("%7.2f:", k_angle_offset);
+		printk("%7.2f:", hall_angle);
 		printk("%7.2f:", Iq_max);
 		printk("%7.2f:", manual_Iq_ref);
 		//printk("%7.2f:", V_op);
@@ -1239,6 +1243,7 @@ void loop_critical_task()
 		duty_a = duty_abc.a;
 		duty_b = duty_abc.b;
 		Iq_ref = Idq_ref.q;
+		Id_ref = Idq_ref.d;
 		Iq_meas = Idq.q;
 		Id_meas = Idq.d;
 		Vd = Vdq.d;
