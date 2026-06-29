@@ -17,7 +17,7 @@
  *
  * SPDX-License-Identifier: LGPL-2.1
  */
-
+//Motor right
 /**
  * @brief  This file is an example of a Field Oriented Control for
  *         OwnTech OwnVerter board.
@@ -62,8 +62,8 @@ void application_task();
 #define HALL2 PC7
 #define HALL3 PD2
 
-#define MY_INVERTER_ID 4
-#define MY_INVERTER_ID_L 5
+#define MY_INVERTER_ID 5
+
 
 // 3. Create the RS485 object
 Rs485Communication rs485;
@@ -72,6 +72,7 @@ Rs485Communication rs485;
 typedef struct {
     uint8_t target_id;
     float   target_line_length;
+	uint8_t checksum; 
 } InverterPayload_t;
 #pragma pack(pop)
 
@@ -79,9 +80,17 @@ typedef struct {
 typedef struct {
     uint8_t  source_id;
     float msg_code;
+	uint8_t checksum;
 } InverterReply_t;
 #pragma pack(pop)
 
+static uint8_t compute_checksum(const uint8_t* data, int len){
+	uint8_t cs = 0;
+	for (int i = 0; i = len; i++){
+		cs ^= data[i];
+	}
+	return cs;
+}
 
 uint8_t rs485_tx_buffer[sizeof(InverterPayload_t)];
 uint8_t rs485_rx_buffer[sizeof(InverterPayload_t)];
@@ -147,7 +156,7 @@ static uint32_t trigger_counter = 0;
  */
 static int16_t sector[] = {-1, 5, 1, 0, 3, 4, 2};
 //static int16_t sector[] = {-1, 2, 4, 3, 0, 1, 5};
-static float32_t k_angle_offset = -PI/2; //0.0F;
+static float32_t k_angle_offset = PI;//-PI/2; //0.0F;
 
 /* Power LEG measures */
 static float32_t meas_data;
@@ -207,13 +216,14 @@ static float32_t recieved_Iq_f;
 
 /* Angle control variables */
 static float32_t theta_m_ref = 0.0F;
+static float32_t theta_m_ref_l = 0.0F;
 static float32_t theta_m = 0.0F;
 static float32_t omega_m = 0.0F;
-static float32_t Ki_pos = -2.0F;
-static float32_t Kp_pos = 30.0F;
-static float32_t Kd_pos = 0.05F;
-static float32_t Iq_ref_pos = 0.0F;
- 
+
+static const float32_t K_pos[1][3] = {15.13F,  3.72F,  0.208F};
+static float32_t K_posi = K_pos[0][0];
+static float32_t K_posp = K_pos[0][1];
+static float32_t K_posd = K_pos[0][2];
 static float32_t int_pos = 0.0F;
 static int anti_windup = 1;
 
@@ -283,12 +293,15 @@ static uint8_t prev_angle_index = 255; // Initialized to an impossible state
 
 
 /* Observer Tuning Parameters */
-static float32_t J_inertia = 0.00019F;  // [kg.m^2] MUST BE TUNED FOR YOUR MOTOR/LOAD
-static float32_t obs_L1 = 0.8F;        // Angle correction gain
-static float32_t obs_L2 = 10.0F;       // Velocity correction gain
-static float32_t obs_L3 = 50.0F;     // Disturbance correction gain (Integration)
+static const float32_t J_inertia = 0.07F;  // [kg.m^2] TO BE ADJUSTED LEFT/RIGHT
+static const float32_t friction_coeff = 0.12F;
+static float32_t obs_L1 = 0.0007F;        // Angle correction gain
+static float32_t obs_L1_man = 0.0007F;
+static float32_t obs_L2 = 0.0020F;       // Velocity correction gain
+static float32_t obs_L2_man = 0.0020F;
+static float32_t obs_L3 = 0.0F;     // Disturbance correction gain (Integration)
 static float32_t obs_L3_torque = J_inertia / (pole_pairs * Ts * 10.0F); // Precompute this term for efficiency
-
+static float32_t speed_gain = 1.0F; 
 const float32_t ALPHA_F_HAT = Ts / (0.0032F + Ts); 
 
 const float32_t ALPHA_IQ = Ts / (0.0008F + Ts);	 // Filter coefficient for Iq measurement (cutoff ~200 Hz);     
@@ -364,7 +377,7 @@ static float32_t theta_e_hat = 0.0F; // Estimated electrical angle for plotting
 static float32_t omega_e_hat = 0.0F;
 inline void run_disturbance_observer()
 {
-	float32_t sign_iq = (manual_Iq_ref > 0.05F) ? 1.0F : ((manual_Iq_ref < -0.05F) ? -1.0F : 0.0F); // Hysteresis to avoid noise around zero
+	float32_t sign_iq = (Idq_ref.q > 0.05F) ? 1.0F : ((Idq_ref.q < -0.05F) ? -1.0F : 0.0F); // Hysteresis to avoid noise around zero
 	if (sign_iq != sign_iq_prev && sign_iq != 0.0F) {
 		// If we detect a change in the sign of Iq reference, we can assume the motor is starting to move in the opposite direction. 
 		// This can be used as a pseudo-trigger to reset the observer states for better convergence.
@@ -389,30 +402,41 @@ inline void run_disturbance_observer()
     // Using phi (0.12F) as your flux linkage and the previous cycle's Idq.q
 	//float32_t Iq_for_observer = (control_state == POWER_ST) ? Idq.q : 0.0F; // Use actual Iq during POWER mode, else assume 0
 	
-    //float32_t Iq_for_obs = (control_state == POWER_ST) ? Idq.q : 0.0F;
-    //float32_t Te_elec = 1.5F * pole_pairs * phi * Iq_for_obs;
+    float32_t Iq_for_obs = (control_state == POWER_ST) ? Idq.q : 0.0F;
+    float32_t Te_elec = 1.5F * pole_pairs * phi * Iq_for_obs;
     /* Effective electrical inertia: J_e = J_inertia / pole_pairs */
-    //float32_t omega_e_dot = (Te_elec - f_hat) / (J_inertia / pole_pairs);
-	//float32_t omega_e_dot = pole_pairs * (Te_elec - f_hat) / J_inertia;
+    //float32_t omega_e_dot = (Te_elec - f_hat - friction_coeff*omega_e_hat ) / (J_inertia / pole_pairs);
+	float32_t omega_e_dot = (Te_elec - f_hat*0 - friction_coeff*omega_e_hat) / J_inertia;
     
-    //omega_e_hat += omega_e_dot * Ts;
+    omega_e_hat += omega_e_dot * Ts;
     theta_e_hat += omega_e_hat * Ts;
     theta_e_hat = ot_modulo_2pi(theta_e_hat);
 
 	omega_e_hat *= 0.999F; // Simple low-pass filtering to improve robustness of the observer (tuning parameter, can be adjusted or removed)
 
-	//float32_t w_n = 20.0F + 0.35F * fabsf(omega_m_hat); // 2. Clamp w_n between 0.0 and 200.0 // (Note: fabsf guarantees it is >= 2.0, so we only really need to clamp the top) 
+	float32_t w_n = 20.0F + speed_gain * fabsf(omega_m_hat); // 2. Clamp w_n between 0.0 and 200.0 // (Note: fabsf guarantees it is >= 2.0, so we only really need to clamp the top) 
 
-	//if (w_n > 200.0F) { w_n = 200.0F; } // 3. Update the global observer gains 
+	if (w_n > 200.0F) { w_n = 200.0F; } // 3. Update the global observer gains 
 
-	//obs_L1 = 100.25F * w_n; 
+	obs_L1 = obs_L1_man * w_n;
+	// obs_L1 = 0.01F; 
+	
 
-	//obs_L2 = 2.5F * (w_n * w_n); 
-
+	// obs_L2 = 2.5F * (w_n * w_n); 
+	obs_L2 = obs_L2_man * (w_n * w_n);
+	
+	
     /* ----------------------------------------------------------------
      * 2. CORRECTION STEP (Runs only when Hall state changes)
      * ----------------------------------------------------------------*/
-	
+	float32_t e = hall_angle - theta_e_hat;
+    if (e > PI)       e -= 2.0F * PI;
+    else if (e < -PI) e += 2.0F * PI;
+
+    theta_e_hat = ot_modulo_2pi(theta_e_hat + obs_L1 * e);
+    omega_e_hat += obs_L2 * e;
+    f_hat       -= obs_L3_torque * e;
+	/*
    if (angle_index != prev_angle_index) {
 		if (prev_angle_index == 255) {
 			theta_e_hat = hall_angle;
@@ -426,10 +450,10 @@ inline void run_disturbance_observer()
 
             theta_e_hat = ot_modulo_2pi(theta_e_hat + obs_L1 * e);
             omega_e_hat += obs_L2 * e;
-            f_hat       -= obs_L3 * e;
+            f_hat       -= obs_L3_torque * e;
         }
         prev_angle_index = angle_index;
-    } 
+    } */
 }
 
 void dump_scope_datas(ScopeMimicry &scope) {
@@ -555,10 +579,10 @@ inline void get_position_and_speed()
 	angle_index = HALL1_value * 1 + HALL2_value * 2 + HALL3_value * 4;
 
 	hall_angle =
-			ot_modulo_2pi(PI / 6.0 * sector[angle_index] +
+			ot_modulo_2pi(PI / 3.0 * sector[angle_index] +
 			k_angle_offset);
 
-	encoder_count = spin.timer.getIncrementalEncoderValue(TIMER3);
+	// encoder_count = spin.timer.getIncrementalEncoderValue(TIMER3);
 
 	w_estimate = pulsation_estimator(sector[angle_index], counter_time * Ts);
 	pllDatas = pllangle.calculateWithReturn(hall_angle);
@@ -566,23 +590,23 @@ inline void get_position_and_speed()
 	angle_filtered = pllDatas.angle;
 
 	/* Unwrap the electrical angle */
-	/* float32_t delta = theta_e_hat - angle_prev;
+	float32_t delta = angle_filtered - angle_prev; //angle_filtered   theta_e_hat
 
-	if (delta > PI) {
+	if (delta > 1.5*PI) {
 		angle_elec_unwrapped -= 2.0F * PI;
-	} else if (delta < -PI) {
+	} else if (delta < -1.5*PI) {
 		angle_elec_unwrapped += 2.0F * PI;
 	}
 	angle_elec_unwrapped += delta;
-	angle_prev = theta_e_hat; //angle_filtered;
+	angle_prev = angle_filtered; //angle_filtered theta_e_hat;
 
 	theta_m = angle_elec_unwrapped / pole_pairs;
-	omega_m = omega_e_hat / pole_pairs; // omega_e_hat / pole_pairs; // omega_m * 0.95F + (omega_e_hat / pole_pairs) * 0.05F;
+	//omega_m = omega_e_hat / pole_pairs; // omega_e_hat / pole_pairs; // omega_m * 0.95F + (omega_e_hat / pole_pairs) * 0.05F;
 
-	theta_m_encoder =  2.0F * PI * (float32_t)(encoder_count) / (float32_t)ENCODER_COUNTS_PER_REV ;
-	theta_e_encoder = ot_modulo_2pi((pole_pairs * theta_m_encoder) + encoder_offset);
- */
-	w_meas = w_mes_filter.calculateWithReturn(pllDatas.w);
+	// theta_m_encoder =  2.0F * PI * (float32_t)(encoder_count) / (float32_t)ENCODER_COUNTS_PER_REV ;
+	// theta_e_encoder = ot_modulo_2pi((pole_pairs * theta_m_encoder) + encoder_offset);
+ 
+	omega_m = w_mes_filter.calculateWithReturn(pllDatas.w) / pole_pairs;
 }
 
 /**
@@ -615,6 +639,7 @@ inline void stop_pwm_and_reset_states_ifnot()
 		pwm_enable = false;
 	}
 }
+
 
 inline void control_torque_imc()
 {
@@ -705,6 +730,7 @@ inline void control_torque_imc()
 	Vabc.c = 0.0F; */
 }
 
+
 /**
  * Performs Torque control using Field Oriented Control algorithm
  */
@@ -728,18 +754,13 @@ inline void control_torque()
         return;   
     } */
 	angle_4_control = angle_filtered; //theta_e_hat; //angle_filtered; // hall_angle;
-	//float32_t pos_error = theta_m_ref - theta_m_encoder;
-	//Iq_ref_pos = Kp_pos * pos_error - Kd_pos * (w_meas / pole_pairs);
-	//q_angle = atan2(q_beta, q_alpha);
-	//angle_4_control = ot_modulo_2pi(angle_filtered + w_meas * T_delay); //angle_filtered; // hall_angle
-	//Iq_ref_pos = -5.2 * (angle_4_control - theta_m_ref) - 2.3* w_meas; 
-	//float32_t omega_m_dump = w_meas / pole_pairs;
-	//int_pos += Ts * (theta_m - theta_m_ref) * anti_windup;
-	//Iq_ref_pos = Ki_pos * int_pos + Kp_pos * theta_m + Kd_pos * omega_m;
-	//if (Iq_ref_pos > 3.0F) Iq_ref_pos = 3.0F;
-	//else if (Iq_ref_pos < -3.0F) Iq_ref_pos = -3.0F; 
-	//Idq_ref.q = Iq_ref_pos;
-	Idq_ref.q = manual_Iq_ref;
+	float32_t pos_error = theta_m - theta_m_ref; //theta_m_ref;
+	int_pos += pos_error*Ts*anti_windup;
+	// Idq_ref.q = -K_pos[0][0]*int_pos - K_pos[0][1]*theta_m - K_pos[0][2]*omega_m;
+	Idq_ref.q = -K_posi*int_pos - K_posp*theta_m - K_posd*omega_m;
+
+
+	// Idq_ref.q = manual_Iq_ref;
 	
 	/*
 	angle_error = hall_angle - theta_e_hat;
@@ -785,8 +806,8 @@ inline void control_torque()
 	}
 	*/
 
-	pi_d_integral = pi_d.getIntegral();
-	pi_q_integral = pi_q.getIntegral();
+	// pi_d_integral = pi_d.getIntegral();
+	// pi_q_integral = pi_q.getIntegral();
 
 	Vabc = Transform::to_threephase(Vdq, angle_4_control);
 /*
@@ -855,15 +876,23 @@ void init_variables()
 	Iq_max = 5.0;
 	manual_Iq_ref = 0.0F;
 	manual_Iq_ref_l = 0.0F;
+	//theta_m_ref = 0.0F;
+	//theta_m_ref_l = 0.0F;
 
 }
 
 void rs485_rx_callback(void)
 {
-    spin.led.toggle();
+
+	//handshake_complete = true;
+    InverterPayload_t* payload = (InverterPayload_t*)rs485_rx_buffer;
+
+	uint8_t expected = compute_checksum(rs485_rx_buffer, sizeof(InverterPayload_t) - 1);
+	if (payload->checksum != expected){
+		return;
+	}
 
 	handshake_complete = true;
-    InverterPayload_t* payload = (InverterPayload_t*)rs485_rx_buffer;
     
     if (payload->target_id == MY_INVERTER_ID) {
         // Update the reference based on the incoming command
@@ -877,20 +906,12 @@ void rs485_rx_callback(void)
         
         // Transmit the buffer
         //rs485.startTransmission();
-    }
-	 if (payload->target_id == MY_INVERTER_ID_L) {
-        // Update the reference based on the incoming command
-        manual_Iq_ref_l = payload->target_line_length;
+		 spin.led.toggle();
 
-        /* --- Send ACK 123 back to the control station --- */
-        //InverterReply_t ack_reply = {4,123.0F};
-   
-        //memset(rs485_tx_buffer, 0, sizeof(rs485_tx_buffer));
-        //memcpy(rs485_tx_buffer, &ack_reply, sizeof(InverterReply_t));
-        
-        // Transmit the buffer
-        //rs485.startTransmission();
     }
+	// if (payload->target_id == MY_INVERTER_ID_L) {
+	// 	theta_m_ref_l = (payload->target_line_length) * line_cm_to_motor_rad;	
+	// }
 }
 /* --------------SETUP FUNCTIONS------------------------------- */
 
@@ -919,7 +940,7 @@ void setup_routine()
 
 	rs485.configureCustom(rs485_tx_buffer, 
                           rs485_rx_buffer, 
-                          5, 
+                          sizeof(InverterPayload_t), //5, 
                           rs485_rx_callback, 
                           115200,  
                           false);  
@@ -927,7 +948,9 @@ void setup_routine()
 	rs485.turnOnCommunication();
 
 	/* --- Send Startup Code 111 --- */
-    InverterReply_t startup_reply = {4,111.0F};
+    InverterReply_t startup_reply = {4,111.0F,0};
+	startup_reply.checksum = compute_checksum((uint8_t*)&startup_reply, 
+												sizeof(InverterPayload_t) - 1);
 	memset(rs485_tx_buffer, 0, sizeof(rs485_tx_buffer));
     memcpy(rs485_tx_buffer, &startup_reply, sizeof(InverterReply_t));
     
@@ -950,27 +973,30 @@ void setup_routine()
 	//scope.connectChannel(Vb, "Vb");
 	//scope.connectChannel(Vc, "Vc");                       /* 0 */
 	//scope.connectChannel(V12_value, "V12_value");           /* 0 */
-	//scope.connectChannel(Vq, "Vq");                         /* 1 */
+	scope.connectChannel(Vq, "Vq");                         /* 1 */
 	//scope.connectChannel(Vd, "Vd");                         /* 2 */
-	//scope.connectChannel(I1_low_value, "I1_low_value");     /* 3 */
-	//scope.connectChannel(I2_low_value, "I2_low_value");     /* 4 */
+	scope.connectChannel(I1_low_value, "I1_low_value");     /* 3 */
+	scope.connectChannel(I2_low_value, "I2_low_value");     /* 4 */
 	//scope.connectChannel(I_high, "I_high_value");     	    /* 5 */
 	//scope.connectChannel(i_alpha_ref_raw, "i_alpha_ref_raw");
 	//scope.connectChannel(i_alpha,"i_alpha");
 	//scope.connectChannel(i_beta_ref_raw, "i_beta_ref_raw");
 	//scope.connectChannel(i_beta,"i_beta");
 	//scope.connectChannel(i_beta_ref_filtered,"i_beta_ref_filtered");
-	scope.connectChannel(Iq_meas, "Iq_meas");               /* 6 */
-	scope.connectChannel(Iq_ref, "Iq_ref");                 /* 7 */
-	scope.connectChannel(Id_meas, "Id_meas");             /* 8 */
-	scope.connectChannel(Id_ref, "Id_ref");
+	//scope.connectChannel(Iq_meas, "Iq_meas");               /* 6 */
+	//scope.connectChannel(Iq_ref, "Iq_ref");                 /* 7 */
+	//scope.connectChannel(Id_meas, "Id_meas");             /* 8 */
+	//scope.connectChannel(Id_ref, "Id_ref");
 	//scope.connectChannel(Iabc.a, "Ia");
 	//scope.connectChannel(Iabc.b, "Ib");
-	scope.connectChannel(angle_filtered, "angle_filtered"); /* 9 */
-	//scope.connectChannel(theta_e_encoder, "theta_e_encoder");               /* 9 */
+	// scope.connectChannel(theta_e_hat, "theta_e_hat"); /* 9 */
+	// scope.connectChannel(theta_e_hat, "omega_e_hat"); /* 9 */
+	scope.connectChannel(hall_angle, "hall_angle"); /* 9 */
+	scope.connectChannel(theta_m_ref, "theta_m_ref"); /* 9 */
+	scope.connectChannel(omega_m, "omega_m");               /* 9 */
 	//scope.connectChannel(Ib_ref, "Ib_ref");                 /* 10 */
-	scope.connectChannel(hall_angle, "hall_angle");         /* 11 */
-	//scope.connectChannel(theta_e_hat, "theta_e_hat"); 
+	// scope.connectChannel(hall_angle, "hall_angle");         /* 11 */
+	// scope.connectChannel(angle_filtered, "angle_filtered");         /* 11 */
 	//scope.connectChannel(Ia_ref, "Ia_ref");                 /* 12 */
 	//scope.connectChannel(control_state_f, "control_state"); /* 13 */
 	//scope.connectChannel(angle_error, "angle_error");     /* 14 */
@@ -1026,7 +1052,6 @@ void loop_background_task()
 		//received_serial_char = uart1.usart1ReadChar();
 		
 		//theta_m_ref = theta_m;
-		//Iq_ref_pos = 0.0F;
 		asked_mode = POWERMODE;
 		scope.start();
 		break;
@@ -1038,25 +1063,40 @@ void loop_background_task()
 	case 'r':
 		is_downloading = true;
 		break;
-	case 'u':
+  	case 'u':
 	{
-		//theta_m_ref += 0.5F;
-		manual_Iq_ref += 2.0F;
+		theta_m_ref += 0.5F;
+		// manual_Iq_ref += 0.5F;
 		//V_op += 0.5;
 		//omega_op = 2.0F * PI * (V_op / 0.5F);
 		break;
 		}
 	case 'd':
-		//theta_m_ref -= 0.5F;
-		manual_Iq_ref -= 2.0F;
+		theta_m_ref -= 0.5F;
+		// manual_Iq_ref -= 0.5F;
 		//V_op -= 0.5F;
 		//if (V_op < 0.5F) V_op = 0.5F;
     	//omega_op = 2.0F * PI * (V_op / 0.5F);
-		break;
+		break;  
 	case 's':
 		//theta_m_ref = 0.0F;
 		//manual_Iq_ref = 2.0F;
-		Iq_ref_pos = 2.0F;
+		K_posi += 0.01F;
+		break;
+	case 'x':
+		K_posi -= 0.01F;
+		break;
+	case 'q':
+		K_posp += 0.01F;
+		break;
+	case 'w':
+		K_posp -= 0.01F;
+		break;
+	case 'z':
+		K_posd += 0.0001F;
+		break;
+	case 'e':
+		K_posd -= 0.0001F;
 		break;
 /* 	case 'v':
     	vf_open_loop_mode = !vf_open_loop_mode;
@@ -1076,7 +1116,7 @@ void loop_background_task()
 		/* To print scope datas in ownplot as soon as possible */
 		memory_print = !memory_print;
 		break;
-	case 'q':
+	case 'a':
 		/* Relaunch scope acquisition */
 		//trigger_counter = SCOPE_SIZE;
 		scope.start();
@@ -1090,11 +1130,19 @@ void loop_background_task()
 void application_task()
 {
 	if (!memory_print) {
+		printk("%7.4f:", K_posi);
+		printk("%7.4f:", K_posp);
+		printk("%7.4f:", K_posd);
+		// printk("%7.4f:", obs_L2_man);
+		// printk("%7.4f:", speed_gain);
+		printk("%7.2f:", theta_m_ref);
+		printk("%7.2f:", theta_m_ref_l);
+		printk("%7.2f:", theta_m);
 		printk("%7.2f:", V_high);
 		//printk("%7.2f:", Vabc.a);
 		//printk("%7.2f:", Iabc.a);
-		printk("%7.2f:", angle_filtered);
-		printk("%7.2f:", k_angle_offset);
+		// printk("%7.2f:", angle_filtered);
+		// printk("%7.2f:", k_angle_offset);
 		printk("%7.2f:", hall_angle);
 		printk("%7.2f:", Iq_max);
 		printk("%7.2f:", manual_Iq_ref);
@@ -1102,7 +1150,6 @@ void application_task()
 		//printk("%7.2f:", I1_offset);
 		//printk("%7.2f:", theta_m);
 		//printk("%7.2f:", theta_m_ref);
-		//printk("%7.2f:", Iq_ref_pos);
 		//printk("%7.2f:", recieved_Iq_f);
 		//printk("%7.2f:", I_high);
 		printk("%7.2f:", i_alpha_ref_raw);
@@ -1141,19 +1188,25 @@ void application_task()
 	}
 
 	if (!handshake_complete) {
-    InverterReply_t startup_reply = {4,111.0F};
+    InverterReply_t startup_reply = {4,111.0F,0};
+	startup_reply.checksum = compute_checksum((uint8_t*)&startup_reply, sizeof(InverterPayload_t) - 1);
 	memset(rs485_tx_buffer, 0, sizeof(rs485_tx_buffer));
     memcpy(rs485_tx_buffer, &startup_reply, sizeof(InverterReply_t));
         
     rs485.startTransmission();
 	}
+/* 	if (V_high_filtered > 80.0F) {
+		asked_mode = POWERMODE;
+	} else {
+		asked_mode = IDLEMODE;
+	}	 */
 	switch (control_state) {
 	case OFFSET_ST:
 		if (counter_time > (uint32_t)NB_OFFSET) {
 			spin.led.turnOff();
 			I1_offset = -tmpI1_offset / NB_OFFSET;
 			I2_offset = -tmpI2_offset / NB_OFFSET;
-			control_state = IDLE_ST;
+			control_state = POWER_ST; //IDLE_ST;
 		}
 		break;
 
@@ -1173,12 +1226,18 @@ void application_task()
 
 			theta_m_ref = theta_m; // Set position reference to current position to avoid jumps at startup
 			*/
+			//asked_mode = POWERMODE;
 			control_state = POWER_ST;
 		}
+/* 		else if (V_high >= 80){
+			asked_mode = POWERMODE;
+			//control_state = POWER_ST;
+		} */
 		break;
 
 	case POWER_ST:
 		if (asked_mode == IDLEMODE) {
+			//asked_mode = IDLEMODE;
 			control_state = IDLE_ST;
 		}
 		break;
