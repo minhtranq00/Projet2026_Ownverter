@@ -62,7 +62,7 @@ void application_task();
 #define HALL2 PC7
 #define HALL3 PD2
 
-#define MY_INVERTER_ID 5
+#define MY_INVERTER_ID 5 // LEFT_MOTOR = 5, RIGHT_MOTOR = 4
 
 
 // 3. Create the RS485 object
@@ -72,6 +72,7 @@ Rs485Communication rs485;
 typedef struct {
     uint8_t target_id;
     float   target_line_length;
+	//uint8_t mode; // interrupteur
 	uint8_t checksum; 
 } InverterPayload_t;
 #pragma pack(pop)
@@ -84,9 +85,14 @@ typedef struct {
 } InverterReply_t;
 #pragma pack(pop)
 
+// Interrupteur
+/* static volatile uint8_t received_mode = 0;
+static volatile uint32_t last_rx_counter = 0;
+static const uint32_t COMM_TIMEOUT_COUNT = 5000; // 5000 * 100us = 0.5 seconds */
+
 static uint8_t compute_checksum(const uint8_t* data, int len){
 	uint8_t cs = 0;
-	for (int i = 0; i = len; i++){
+	for (int i = 0; i < len; i++){
 		cs ^= data[i];
 	}
 	return cs;
@@ -600,7 +606,7 @@ inline void get_position_and_speed()
 	angle_elec_unwrapped += delta;
 	angle_prev = angle_filtered; //angle_filtered theta_e_hat;
 
-	theta_m = angle_elec_unwrapped / pole_pairs;
+	theta_m = (angle_elec_unwrapped / pole_pairs);
 	//omega_m = omega_e_hat / pole_pairs; // omega_e_hat / pole_pairs; // omega_m * 0.95F + (omega_e_hat / pole_pairs) * 0.05F;
 
 	// theta_m_encoder =  2.0F * PI * (float32_t)(encoder_count) / (float32_t)ENCODER_COUNTS_PER_REV ;
@@ -754,13 +760,13 @@ inline void control_torque()
         return;   
     } */
 	angle_4_control = angle_filtered; //theta_e_hat; //angle_filtered; // hall_angle;
-	float32_t pos_error = theta_m - theta_m_ref; //theta_m_ref;
+	 float32_t pos_error = theta_m - theta_m_ref; //theta_m_ref;
 	int_pos += pos_error*Ts*anti_windup;
 	// Idq_ref.q = -K_pos[0][0]*int_pos - K_pos[0][1]*theta_m - K_pos[0][2]*omega_m;
-	Idq_ref.q = -K_posi*int_pos - K_posp*theta_m - K_posd*omega_m;
+	Idq_ref.q = -K_posi*int_pos - K_posp*theta_m - K_posd*omega_m; 
 
 
-	// Idq_ref.q = manual_Iq_ref;
+	//Idq_ref.q = theta_m_ref;
 	
 	/*
 	angle_error = hall_angle - theta_e_hat;
@@ -870,7 +876,7 @@ void init_variables()
 	/* State view of the pwm */
 	pwm_enable = false;
 	/* Idle or power mode*/
-	asked_mode = IDLEMODE;
+	asked_mode = POWERMODE; //IDLEMODE;
 	/* We begin to measure the current offset before all */
 	control_state = OFFSET_ST;
 	Iq_max = 5.0;
@@ -896,7 +902,11 @@ void rs485_rx_callback(void)
     
     if (payload->target_id == MY_INVERTER_ID) {
         // Update the reference based on the incoming command
-        theta_m_ref = (payload->target_line_length) * line_cm_to_motor_rad;
+        theta_m_ref = ((payload->target_line_length) * line_cm_to_motor_rad); // LEFT_MOTOR = POSITIVE, RIGHT_MOTOR = NEGATIVE
+
+		// Interrupteur 
+		//received_mode = payload->mode;
+		//last_rx_counter = counter_time;
 
         /* --- Send ACK 123 back to the control station --- */
         //InverterReply_t ack_reply = {4,123.0F};
@@ -948,7 +958,7 @@ void setup_routine()
 	rs485.turnOnCommunication();
 
 	/* --- Send Startup Code 111 --- */
-    InverterReply_t startup_reply = {4,111.0F,0};
+    InverterReply_t startup_reply = {MY_INVERTER_ID,111.0F,0};
 	startup_reply.checksum = compute_checksum((uint8_t*)&startup_reply, 
 												sizeof(InverterPayload_t) - 1);
 	memset(rs485_tx_buffer, 0, sizeof(rs485_tx_buffer));
@@ -1136,7 +1146,7 @@ void application_task()
 		// printk("%7.4f:", obs_L2_man);
 		// printk("%7.4f:", speed_gain);
 		printk("%7.2f:", theta_m_ref);
-		printk("%7.2f:", theta_m_ref_l);
+		// printk("%7.2f:", theta_m_ref_l);
 		printk("%7.2f:", theta_m);
 		printk("%7.2f:", V_high);
 		//printk("%7.2f:", Vabc.a);
@@ -1188,7 +1198,7 @@ void application_task()
 	}
 
 	if (!handshake_complete) {
-    InverterReply_t startup_reply = {4,111.0F,0};
+    InverterReply_t startup_reply = {MY_INVERTER_ID,111.0F,0};
 	startup_reply.checksum = compute_checksum((uint8_t*)&startup_reply, sizeof(InverterPayload_t) - 1);
 	memset(rs485_tx_buffer, 0, sizeof(rs485_tx_buffer));
     memcpy(rs485_tx_buffer, &startup_reply, sizeof(InverterReply_t));
@@ -1200,6 +1210,19 @@ void application_task()
 	} else {
 		asked_mode = IDLEMODE;
 	}	 */
+
+	// Interrupteur
+/* 	bool comm_alive = ((counter_time - last_rx_counter) < COMM_TIMEOUT_COUNT);
+	if (!comm_alive){
+		asked_mode = IDLEMODE;
+	} else {
+		switch (received_mode) {
+			case 1: asked_mode = POWERMODE; break;
+			case 2: asked_mode = (V_high_filtered > 80.0F) ? POWERMODE : IDLEMODE; break;
+			default: asked_mode = IDLEMODE; break;
+		}
+	} */
+
 	switch (control_state) {
 	case OFFSET_ST:
 		if (counter_time > (uint32_t)NB_OFFSET) {
