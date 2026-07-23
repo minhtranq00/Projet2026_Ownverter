@@ -4,7 +4,7 @@ Firmware de contrôle de position d'un moteur synchrone (PMSM) par commande vect
 (Field Oriented Control), sur carte **OwnTech OwnVerter**. La consigne de position arrive
 par un bus **RS485** depuis une IHM (Raspberry Pi + joystick).
 
-> Ce fichier documente le code tel qu'il est écrit. Les points marqués **⚠️** signalent des
+> Ce fichier documente le code tel qu'il est écrit. Les points marqués **/!\** signalent des
 > comportements réels du code qui peuvent surprendre, ou du code présent mais inactif.
 
 ---
@@ -38,7 +38,7 @@ cartes sur le même bus RS485, différenciées par `MY_INVERTER_ID`.
 | Carte | OwnTech OwnVerter (mode Buck, 3 bras) |
 | Moteur | PMSM 8 pôles → `pole_pairs = 4` |
 | Capteurs position | 3 capteurs à effet Hall sur `PC6`, `PC7`, `PD2` |
-| Encodeur | initialisé sur `TIMER3` — **⚠️ non utilisé dans la commande** (§ 9) |
+| Encodeur | initialisé sur `TIMER3` — **/!\ non utilisé dans la commande** (§ 9) |
 | Communication | RS485, 115200 bauds, trames de 6 octets |
 | Bus DC | seuil minimal d'armement `V_HIGH_MIN = 5.0 V` |
 
@@ -54,7 +54,7 @@ longueur de fil envoyée par l'IHM et la consigne angulaire interne.
 
 ---
 
-## 3. Architecture logicielle — 3 tâches
+## 3. Architecture logicielle - 3 tâches
 
 | Tâche | Période | Rôle |
 |---|---|---|
@@ -121,7 +121,7 @@ Tant que `handshake_complete == false`, la carte réémet le code 111 toutes les
 
 ---
 
-## 5. Mesure de position et de vitesse — `get_position_and_speed()`
+## 5. Mesure de position et de vitesse - `get_position_and_speed()`
 
 Chaîne complète, exécutée à 10 kHz :
 
@@ -144,7 +144,7 @@ longueur de fil.
 
 ---
 
-## 6. Boucle de commande — `control_torque()`
+## 6. Boucle de commande - `control_torque()`
 
 ### Étage 1 : position → couple
 
@@ -164,9 +164,9 @@ Retour d'état avec action intégrale. Gains par défaut :
 | `K_posp` | proportionnel | 3.72 | position `theta_m` |
 | `K_posd` | dérivé | 0.208 | vitesse `omega_m` |
 
-**⚠️ À noter :** seul le terme intégral voit `theta_m_ref`. Les termes P et D agissent sur
+**/!\ À noter :** seul le terme intégral voit `theta_m_ref`. Les termes P et D agissent sur
 `theta_m` et `omega_m` **absolus**, pas sur l'erreur. Le suivi de consigne en régime établi
-repose donc entièrement sur l'intégrateur — c'est voulu dans une commande par retour d'état,
+repose donc entièrement sur l'intégrateur - c'est voulu dans une commande par retour d'état,
 mais cela explique que la réponse dépende fortement de `K_posi`.
 
 **Anti-windup :** si `Idq_ref.q` sature à `±Iq_max` (5.0 A), `anti_windup = 0` gèle
@@ -240,7 +240,7 @@ part immédiatement rejoindre la position zéro. Pour démarrer sans à-coup, d�
 |---|---|---|
 | Surintensité AC (I1, I2) | ±13 A | `error_counter++` |
 | Surintensité DC (I_high) | 13 A | `error_counter++` |
-| Filtrage des faux positifs | — | `error_counter--` tous les 1000 cycles ; bascule en `ERROR_ST` au-delà de 3 |
+| Filtrage des faux positifs | - | `error_counter--` tous les 1000 cycles ; bascule en `ERROR_ST` au-delà de 3 |
 | Saturation de couple | `Iq_max = 5.0 A` | Écrêtage de `Idq_ref.q` + anti-windup |
 | Saturation de tension | ±12 V | Bornes des PID d/q |
 | Trame corrompue | XOR | Trame rejetée, consigne figée |
@@ -251,7 +251,7 @@ part immédiatement rejoindre la position zéro. Pour démarrer sans à-coup, d�
 
 ---
 
-## 9. Code présent mais **inactif** ⚠️
+## 9. Code présent mais **inactif** /!\
 
 Ces blocs sont compilés (ou commentés) mais n'influencent pas le moteur. Utile à savoir avant
 de modifier quoi que ce soit.
