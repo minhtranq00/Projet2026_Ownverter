@@ -200,7 +200,7 @@ Puis `apply_duties()` → `LEG1/2/3`.
 ## 7. Machine d'états
 
 ```
-        OFFSET_ST ──(après 2000 cycles = 0.2 s)──▶ POWER_ST   ⚠️ voir ci-dessous
+        OFFSET_ST ──(après 2000 cycles = 0.2 s)──▶ POWER_ST   /!\ voir ci-dessous
             │                                        │
         PWM arrêté                              touche 'i'
                                                      ▼
@@ -216,7 +216,7 @@ Puis `apply_duties()` → `LEG1/2/3`.
 | `POWER_ST` | 2 | Commande active, PWM en marche. |
 | `ERROR_ST` | 3 | Surintensité détectée. PWM arrêté. Sortie uniquement par `'i'`. |
 
-**⚠️ Configuration actuelle (mode test) :** deux modifications court-circuitent l'armement manuel :
+**/!\ Configuration actuelle (mode test) :** deux modifications court-circuitent l'armement manuel :
 
 ```c
 asked_mode = POWERMODE;      // dans init_variables() — au lieu de IDLEMODE
@@ -228,7 +228,7 @@ La calibration d'offset est bien effectuée avant. En revanche, ce chemin **ne v
 `V_high_filtered`** : le test de tension n'existe que dans la transition `IDLE_ST → POWER_ST`,
 qui est contournée. À remettre en `IDLE_ST` pour un fonctionnement normal.
 
-**⚠️ Au démarrage, `theta_m_ref` vaut 0** alors que `theta_m` vaut la position réelle : le moteur
+**/!\ Au démarrage, `theta_m_ref` vaut 0** alors que `theta_m` vaut la position réelle : le moteur
 part immédiatement rejoindre la position zéro. Pour démarrer sans à-coup, décommenter dans
 `IDLE_ST` la ligne `theta_m_ref = theta_m;`.
 
