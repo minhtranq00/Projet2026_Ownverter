@@ -243,6 +243,7 @@ static const float32_t pole_pairs = 4.0F; // Motor 8 poles -> 4 pole pairs
 static float32_t angle_prev = 0.0F;
 static float32_t angle_elec_unwrapped = 0.0F;
 
+static bool use_encoder = false; // false = Hall + PLL, true = encoder
 /* Encoder for position control */
 static int32_t encoder_count = 0;
 static const int32_t ENCODER_COUNTS_PER_REV = 100 * 4 / (capstan_gear / motor_gear); // adapt to encoder resolution
@@ -353,7 +354,7 @@ uint8_t asked_mode = IDLEMODE;
 
 const uint16_t SCOPE_SIZE = 3000; //512;
 uint16_t k_app_idx;
-ScopeMimicry scope(SCOPE_SIZE, 6);
+ScopeMimicry scope(SCOPE_SIZE, 7);
 static bool is_downloading;
 static bool memory_print;
 
@@ -588,7 +589,7 @@ inline void get_position_and_speed()
 			ot_modulo_2pi(PI / 3.0 * sector[angle_index] +
 			k_angle_offset);
 
-	// encoder_count = spin.timer.getIncrementalEncoderValue(TIMER3);
+	encoder_count = (int32_t)spin.timer.getIncrementalEncoderValue(TIMER3);
 
 	w_estimate = pulsation_estimator(sector[angle_index], counter_time * Ts);
 	pllDatas = pllangle.calculateWithReturn(hall_angle);
@@ -606,12 +607,17 @@ inline void get_position_and_speed()
 	angle_elec_unwrapped += delta;
 	angle_prev = angle_filtered; //angle_filtered theta_e_hat;
 
-	theta_m = (angle_elec_unwrapped / pole_pairs);
+	float32_t theta_m_hall = (angle_elec_unwrapped / pole_pairs);
+
+	/* Encoder */
 	//omega_m = omega_e_hat / pole_pairs; // omega_e_hat / pole_pairs; // omega_m * 0.95F + (omega_e_hat / pole_pairs) * 0.05F;
 
-	// theta_m_encoder =  2.0F * PI * (float32_t)(encoder_count) / (float32_t)ENCODER_COUNTS_PER_REV ;
-	// theta_e_encoder = ot_modulo_2pi((pole_pairs * theta_m_encoder) + encoder_offset);
- 
+	theta_m_encoder =  2.0F * PI * (float32_t)(encoder_count) / (float32_t)ENCODER_COUNTS_PER_REV ;
+	theta_e_encoder = ot_modulo_2pi((pole_pairs * theta_m_encoder) + encoder_offset);
+
+	/* Selection of the source of position*/
+	theta_m = use_encoder ? theta_m_encoder : theta_m_hall;
+
 	omega_m = w_mes_filter.calculateWithReturn(pllDatas.w) / pole_pairs;
 }
 
@@ -759,7 +765,7 @@ inline void control_torque()
 
         return;   
     } */
-	angle_4_control = angle_filtered; //theta_e_hat; //angle_filtered; // hall_angle;
+	angle_4_control = use_encoder ? theta_e_encoder : angle_filtered;;
 	 float32_t pos_error = theta_m - theta_m_ref; //theta_m_ref;
 	int_pos += pos_error*Ts*anti_windup;
 	// Idq_ref.q = -K_pos[0][0]*int_pos - K_pos[0][1]*theta_m - K_pos[0][2]*omega_m;
@@ -984,29 +990,30 @@ void setup_routine()
 	//scope.connectChannel(Vc, "Vc");                       /* 0 */
 	//scope.connectChannel(V12_value, "V12_value");           /* 0 */
 	scope.connectChannel(Vq, "Vq");                         /* 1 */
-	//scope.connectChannel(Vd, "Vd");                         /* 2 */
-	scope.connectChannel(I1_low_value, "I1_low_value");     /* 3 */
-	scope.connectChannel(I2_low_value, "I2_low_value");     /* 4 */
+	scope.connectChannel(Vd, "Vd");                         /* 2 */
+	//scope.connectChannel(I1_low_value, "I1_low_value");     /* 3 */
+	//scope.connectChannel(I2_low_value, "I2_low_value");     /* 4 */
 	//scope.connectChannel(I_high, "I_high_value");     	    /* 5 */
 	//scope.connectChannel(i_alpha_ref_raw, "i_alpha_ref_raw");
 	//scope.connectChannel(i_alpha,"i_alpha");
 	//scope.connectChannel(i_beta_ref_raw, "i_beta_ref_raw");
 	//scope.connectChannel(i_beta,"i_beta");
 	//scope.connectChannel(i_beta_ref_filtered,"i_beta_ref_filtered");
-	//scope.connectChannel(Iq_meas, "Iq_meas");               /* 6 */
+	scope.connectChannel(Iq_meas, "Iq_meas");               /* 6 */
 	//scope.connectChannel(Iq_ref, "Iq_ref");                 /* 7 */
-	//scope.connectChannel(Id_meas, "Id_meas");             /* 8 */
+	scope.connectChannel(Id_meas, "Id_meas");             /* 8 */
 	//scope.connectChannel(Id_ref, "Id_ref");
 	//scope.connectChannel(Iabc.a, "Ia");
 	//scope.connectChannel(Iabc.b, "Ib");
 	// scope.connectChannel(theta_e_hat, "theta_e_hat"); /* 9 */
 	// scope.connectChannel(theta_e_hat, "omega_e_hat"); /* 9 */
-	scope.connectChannel(hall_angle, "hall_angle"); /* 9 */
+	//scope.connectChannel(hall_angle, "hall_angle"); /* 9 */
 	scope.connectChannel(theta_m_ref, "theta_m_ref"); /* 9 */
-	scope.connectChannel(omega_m, "omega_m");               /* 9 */
+	scope.connectChannel(theta_m, "theta_m");
+	//scope.connectChannel(omega_m, "omega_m");               /* 9 */
 	//scope.connectChannel(Ib_ref, "Ib_ref");                 /* 10 */
 	// scope.connectChannel(hall_angle, "hall_angle");         /* 11 */
-	// scope.connectChannel(angle_filtered, "angle_filtered");         /* 11 */
+ 	scope.connectChannel(angle_filtered, "angle_filtered");         /* 11 */
 	//scope.connectChannel(Ia_ref, "Ia_ref");                 /* 12 */
 	//scope.connectChannel(control_state_f, "control_state"); /* 13 */
 	//scope.connectChannel(angle_error, "angle_error");     /* 14 */
@@ -1130,6 +1137,10 @@ void loop_background_task()
 		/* Relaunch scope acquisition */
 		//trigger_counter = SCOPE_SIZE;
 		scope.start();
+		break;
+	case 'c':
+		use_encoder = !use_encoder;
+		printk("use_encoder = %d\n", use_encoder);
 		break;
 	}
 }
