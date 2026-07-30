@@ -265,7 +265,7 @@ validés dans le code.
 | Paramètre | État | Conséquence si faux |
 |---|---|---|
 | `encoder_offset = -0.1F` | **valeur d'essai** | Angle électrique décalé → en mode encodeur le FOC applique la tension au mauvais angle → le moteur cale, s'emballe, ou déclenche la surintensité. **Bloquant.** |
-| `ENCODER_COUNTS_PER_REV` | `100*4/(45/15) = 133,33 → 133` | Mauvaise mise à l'échelle de `theta_m_encoder` : « un tour d'encodeur » ≠ longueur de fil attendue. Dépend de la résolution réelle et du point de montage (axe moteur ou capstan). **Bloquant pour l'échelle.** |
+| `ENCODER_COUNTS_PER_REV` | `100*4/(45/15) = 133,33` | Dépend de la résolution réelle et du point de montage (axe moteur ou capstan). **Bloquant pour l'échelle.** |
 | Bascule à chaud | non protégée | Changer la source de l'angle pendant `POWER_ST` avec un offset imparfait → à-coup violent. |
 
 ### Procédure de calibration (à faire en mode Hall, qui fonctionne)
