@@ -133,7 +133,7 @@ Exécutée à 10 kHz. **Les deux sources sont calculées à chaque cycle**, puis
    `hall_angle = ot_modulo_2pi(PI/3 * sector[angle_index] + k_angle_offset)`.
    `k_angle_offset = PI` est le **calage électrique** Hall ↔ bobinages.
 3. **PLL** → `angle_filtered`, angle continu interpolé (les Hall seuls ne donnent qu'un escalier).
-4. **Déroulement (unwrap)** → `angle_elec_unwrapped`, angle électrique cumulé sans saut à ±π.
+4. **Déroulement (unwrap)** → `angle_elec_unwrapped`, angle électrique cumulé sans saut à ±pi.
 5. `theta_m_hall = angle_elec_unwrapped / pole_pairs`.
 
 ### Chemin encodeur
