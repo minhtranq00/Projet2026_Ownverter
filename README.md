@@ -41,7 +41,7 @@ cartes sur le même bus RS485, différenciées par `MY_INVERTER_ID`.
 | Carte | OwnTech OwnVerter (mode Buck, 3 bras) |
 | Moteur | PMSM 8 pôles → `pole_pairs = 4` |
 | Capteurs position | 3 capteurs à effet Hall sur `PC6`, `PC7`, `PD2` |
-| Encodeur | incrémental sur `TIMER3` — **lu et sélectionnable**, mais à calibrer |
+| Encodeur | incrémental sur `TIMER3` - **lu et sélectionnable**, mais à calibrer |
 | Communication | RS485, 115200 bauds, trames de 6 octets |
 | Bus DC | seuil minimal d'armement `V_HIGH_MIN = 5.0 V` |
 
