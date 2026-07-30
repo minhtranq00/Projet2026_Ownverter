@@ -347,7 +347,7 @@ control_state : angle_index
 |---|---|
 | `control_state = 3` | Surintensité → `ERROR_ST`. Appuyer sur `i` pour réarmer. |
 | `theta_m_ref` figé alors que le joystick bouge | Plus de trames valides reçues (bus, checksum, désalignement). |
-| Terminal figé | Firmware bloqué — pas un problème de bus. |
+| Terminal figé | Firmware bloqué - pas un problème de bus. |
 | LED qui bascule | Trame **valide et adressée à cette carte** reçue (`spin.led.toggle()`). Témoin direct de la santé du bus. |
 
 ### ScopeMimicry
