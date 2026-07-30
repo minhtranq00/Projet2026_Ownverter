@@ -1,4 +1,4 @@
-# Commande FOC — Carte OwnVerter (moteur, ID 5)
+# Commande FOC - Carte OwnVerter (moteur, ID 5)
 
 Firmware de contrôle de position d'un moteur synchrone (PMSM) par commande vectorielle
 (Field Oriented Control), sur carte **OwnTech OwnVerter**. La consigne de position arrive
@@ -7,7 +7,7 @@ par un bus **RS485** depuis une IHM (Raspberry Pi + joystick).
 Deux sources de position sont désormais disponibles et **commutables** : capteurs **Hall + PLL**
 (par défaut, fonctionnel) ou **encodeur incrémental** (câblé, mais à calibrer — voir § 9).
 
-> Ce fichier documente le code tel qu'il est écrit. Les points marqués **⚠️** signalent des
+> Ce fichier documente le code tel qu'il est écrit. Les points marqués **/!\** signalent des
 > comportements réels du code qui peuvent surprendre, ou du code présent mais inactif/à finaliser.
 
 ---
@@ -32,10 +32,6 @@ Deux sources de position sont désormais disponibles et **commutables** : capteu
 Une carte = **un** moteur triphasé (3 bras de puissance). Pour deux moteurs, il faut deux
 cartes sur le même bus RS485, différenciées par `MY_INVERTER_ID`.
 
-> **⚠️ Incohérence de commentaires :** l'en-tête du fichier indique `//Motor right`, mais
-> `#define MY_INVERTER_ID 5` correspond au **moteur gauche** (`LEFT_MOTOR = 5, RIGHT_MOTOR = 4`).
-> C'est le `#define` qui fait foi. À corriger pour éviter la confusion entre les deux cartes.
-
 ---
 
 ## 2. Matériel
@@ -45,7 +41,7 @@ cartes sur le même bus RS485, différenciées par `MY_INVERTER_ID`.
 | Carte | OwnTech OwnVerter (mode Buck, 3 bras) |
 | Moteur | PMSM 8 pôles → `pole_pairs = 4` |
 | Capteurs position | 3 capteurs à effet Hall sur `PC6`, `PC7`, `PD2` |
-| Encodeur | incrémental sur `TIMER3` — **lu et sélectionnable**, mais à calibrer (§ 9) |
+| Encodeur | incrémental sur `TIMER3` — **lu et sélectionnable**, mais à calibrer |
 | Communication | RS485, 115200 bauds, trames de 6 octets |
 | Bus DC | seuil minimal d'armement `V_HIGH_MIN = 5.0 V` |
 
@@ -61,7 +57,7 @@ envoyée par l'IHM et la consigne angulaire interne `theta_m_ref`.
 
 ---
 
-## 3. Architecture logicielle — 3 tâches
+## 3. Architecture logicielle - 3 tâches
 
 | Tâche | Période | Rôle |
 |---|---|---|
@@ -115,7 +111,7 @@ static uint8_t compute_checksum(const uint8_t* data, int len) {
 En réception, une trame dont le XOR ne correspond pas est **rejetée** (`return`), donc `theta_m_ref`
 **garde sa valeur précédente**. Le checksum **détecte** la corruption, il ne la **corrige pas**.
 
-> **⚠️** Le checksum de la **réponse** est calculé avec `sizeof(InverterPayload_t) - 1`. C'est correct
+> **/!\** Le checksum de la **réponse** est calculé avec `sizeof(InverterPayload_t) - 1`. C'est correct
 > aujourd'hui car les deux structures font 6 octets ; à remplacer par `sizeof(InverterReply_t) - 1`
 > pour rester juste si une structure change de taille (ex. ajout de l'octet `mode`).
 
@@ -126,7 +122,7 @@ passe à `true` à la **première trame valide** reçue.
 
 ---
 
-## 5. Mesure de position et de vitesse — `get_position_and_speed()`
+## 5. Mesure de position et de vitesse - `get_position_and_speed()`
 
 Exécutée à 10 kHz. **Les deux sources sont calculées à chaque cycle**, puis une est sélectionnée.
 
@@ -155,16 +151,16 @@ theta_m = use_encoder ? theta_m_encoder : theta_m_hall;
 omega_m = w_mes_filter.calculateWithReturn(pllDatas.w) / pole_pairs;  // vitesse : PLL dans les 2 modes
 ```
 
-> **⚠️ La vitesse `omega_m` vient toujours de la PLL**, même en mode encodeur. Dériver l'encodeur
+> **/!\ La vitesse `omega_m` vient toujours de la PLL**, même en mode encodeur. Dériver l'encodeur
 > donnerait une vitesse trop bruitée pour le terme `-K_posd*omega_m`. C'est un choix pragmatique
-> pour un premier test : `omega_m` ne « suit » pas l'encodeur.
+> pour un premier test : `omega_m` ne suit pas l'encodeur.
 
 `theta_m` est un angle **mécanique cumulé** (multi-tours), indispensable pour asservir une longueur
 de fil.
 
 ---
 
-## 6. Boucle de commande — `control_torque()`
+## 6. Boucle de commande - `control_torque()`
 
 ### Sélection de l'angle de commutation
 
@@ -172,7 +168,7 @@ de fil.
 angle_4_control = use_encoder ? theta_e_encoder : angle_filtered;
 ```
 
-C'est l'angle utilisé pour les transformées de Park (directe et inverse) — le cœur du FOC.
+C'est l'angle utilisé pour les transformées de Park (directe et inverse) - le coeur du FOC.
 
 ### Étage 1 : position → couple
 
@@ -190,9 +186,9 @@ Retour d'état avec action intégrale. Gains par défaut :
 | `K_posp` | proportionnel | 3.72 | position `theta_m` |
 | `K_posd` | dérivé | 0.208 | vitesse `omega_m` |
 
-> **⚠️ Seul le terme intégral voit `theta_m_ref`.** Les termes P et D agissent sur `theta_m` et
+> **/!\ Seul le terme intégral voit `theta_m_ref`.** Les termes P et D agissent sur `theta_m` et
 > `omega_m` **absolus**. Le suivi de consigne en régime établi repose donc entièrement sur
-> l'intégrateur — d'où la forte dépendance à `K_posi`.
+> l'intégrateur - d'où la forte dépendance à `K_posi`.
 
 **Anti-windup :** si `Idq_ref.q` sature à ±`Iq_max` (5.0 A), `anti_windup = 0` gèle l'intégrateur.
 
@@ -226,7 +222,7 @@ Puis `apply_duties()` → `LEG1/2/3`.
 | `POWER_ST` | 2 | Commande active, PWM en marche. |
 | `ERROR_ST` | 3 | Surintensité détectée. PWM arrêté. Sortie uniquement par `'i'`. |
 
-**⚠️ Configuration actuelle (mode test) :** deux modifications court-circuitent l'armement manuel :
+**/!\ Configuration actuelle (mode test) :** deux modifications court-circuitent l'armement manuel :
 
 ```c
 asked_mode = POWERMODE;      // dans init_variables()          (au lieu de IDLEMODE)
@@ -237,7 +233,7 @@ control_state = POWER_ST;    // fin de OFFSET_ST               (au lieu de IDLE_
 avant. Mais ce chemin **ne vérifie pas `V_high_filtered`** (le test n'existe que dans
 `IDLE_ST → POWER_ST`, contournée). À remettre en `IDLE_ST` pour un fonctionnement normal (§ 12).
 
-**⚠️ Au démarrage, `theta_m_ref` vaut 0** alors que `theta_m` vaut la position réelle : le moteur
+**/!\ Au démarrage, `theta_m_ref` vaut 0** alors que `theta_m` vaut la position réelle : le moteur
 part rejoindre la position zéro et peut bouger brusquement. Pour démarrer sans à-coup, décommenter
 `theta_m_ref = theta_m;` dans `IDLE_ST`.
 
@@ -249,7 +245,7 @@ part rejoindre la position zéro et peut bouger brusquement. Pour démarrer sans
 |---|---|---|
 | Surintensité AC (I1, I2) | ±13 A | `error_counter++` |
 | Surintensité DC (I_high) | 13 A | `error_counter++` |
-| Filtrage faux positifs | — | `error_counter--` tous les 1000 cycles ; `ERROR_ST` au-delà de 3 |
+| Filtrage faux positifs | - | `error_counter--` tous les 1000 cycles ; `ERROR_ST` au-delà de 3 |
 | Saturation de couple | `Iq_max = 5.0 A` | Écrêtage de `Idq_ref.q` + anti-windup |
 | Saturation de tension | ±12 V | Bornes des PID d/q |
 | Trame corrompue | XOR | Trame rejetée, consigne figée |
@@ -260,7 +256,7 @@ part rejoindre la position zéro et peut bouger brusquement. Pour démarrer sans
 
 ---
 
-## 9. Mode encodeur — état et calibration ⚠️
+## 9. Mode encodeur — état et calibration /!\
 
 Le chemin encodeur est maintenant **câblé** (lecture active, sélection par `use_encoder`, bascule
 par la touche `'c'`), mais **pas encore utilisable en confiance** : trois paramètres ne sont pas
@@ -295,7 +291,7 @@ validés dans le code.
 | `theta_m_ref_l`, `MY_INVERTER_ID_L` | commentés | Ancien essai de gestion de 2 moteurs sur une seule carte. |
 | Champ `mode` + watchdog interrupteur | commentés | Préparation du sélecteur IDLE/POWER 3 positions, non activé. |
 
-> **⚠️ Réinitialisation d'unwrap manquante.** `init_filt_and_reg()` remet la PLL à 0
+> **/!\ Réinitialisation d'unwrap manquante.** `init_filt_and_reg()` remet la PLL à 0
 > (`pllangle.reset(0.F)`) mais **pas** `angle_prev`, `angle_elec_unwrapped` ni `int_pos`. À chaque
 > arrêt PWM (`stop_pwm_and_reset_states_ifnot`), `angle_prev` garde son ancienne valeur pendant que
 > la PLL saute à 0 → correction d'unwrap parasite → **saut de `theta_m`** à chaque cycle
@@ -321,7 +317,7 @@ validés dans le code.
 | Touche | Action |
 |---|---|
 | `p` | Demande le mode POWER + relance ScopeMimicry |
-| `i` | Demande le mode IDLE — **c'est l'arrêt** |
+| `i` | Demande le mode IDLE - **c'est l'arrêt** |
 | `c` | **Bascule Hall ↔ encodeur** (`use_encoder`). À faire en IDLE uniquement. |
 | `u` / `d` | `theta_m_ref` ± 0,5 rad (test manuel de consigne, **actif**) |
 | `s` / `x` | `K_posi` ± 0,01 (gain intégral) |
@@ -332,7 +328,7 @@ validés dans le code.
 | `m` | Bascule l'affichage : télémétrie ↔ dump continu du scope (pour OwnPlot) |
 | `a` | Relance une acquisition ScopeMimicry |
 
-> Les touches `u`/`d` écrivent directement `theta_m_ref` — la trame RS485 suivante l'écrasera.
+> Les touches `u`/`d` écrivent directement `theta_m_ref` - la trame RS485 suivante l'écrasera.
 > Utiles pour tester sans IHM.
 
 ### Lecture de la télémétrie
@@ -365,7 +361,7 @@ Vq · Vd · Iq_meas · Id_meas · theta_m_ref · theta_m · angle_filtered
 Décimation 10 → un point toutes les **1 ms** ; `SCOPE_SIZE = 3000` → **3 s**.
 Déclenchement `mytrigger()` : `control_state == POWER_ST`.
 
-> **⚠️ Deux règles ScopeMimicry :**
+> **/!\ Deux règles ScopeMimicry :**
 > 1. Le nombre de `connectChannel` **actifs** doit égaler le second argument (**7**). Pour ajouter
 >    une voie (ex. `Iq_ref` pour voir la saturation de couple), en retirer une autre ou augmenter le 7.
 > 2. Le mode `memory_print` (touche `'m'`) imprime **10 indices (0–9)** alors qu'il n'existe que 7
