@@ -5,7 +5,7 @@ Firmware de contrôle de position d'un moteur synchrone (PMSM) par commande vect
 par un bus **RS485** depuis une IHM (Raspberry Pi + joystick).
 
 Deux sources de position sont désormais disponibles et **commutables** : capteurs **Hall + PLL**
-(par défaut, fonctionnel) ou **encodeur incrémental** (câblé, mais à calibrer — voir § 9).
+(par défaut, fonctionnel) ou **encodeur incrémental** (câblé, mais à calibrer).
 
 > Ce fichier documente le code tel qu'il est écrit. Les points marqués **/!\** signalent des
 > comportements réels du code qui peuvent surprendre, ou du code présent mais inactif/à finaliser.
