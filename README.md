@@ -231,7 +231,7 @@ control_state = POWER_ST;    // fin de OFFSET_ST               (au lieu de IDLE_
 
 → **La carte s'arme automatiquement ~0,2 s après le flash.** La calibration d'offset est faite
 avant. Mais ce chemin **ne vérifie pas `V_high_filtered`** (le test n'existe que dans
-`IDLE_ST → POWER_ST`, contournée). À remettre en `IDLE_ST` pour un fonctionnement normal (§ 12).
+`IDLE_ST → POWER_ST`, contournée). À remettre en `IDLE_ST` pour un fonctionnement normal.
 
 **/!\ Au démarrage, `theta_m_ref` vaut 0** alors que `theta_m` vaut la position réelle : le moteur
 part rejoindre la position zéro et peut bouger brusquement. Pour démarrer sans à-coup, décommenter
@@ -256,7 +256,7 @@ part rejoindre la position zéro et peut bouger brusquement. Pour démarrer sans
 
 ---
 
-## 9. Mode encodeur — état et calibration /!\
+## 9. Mode encodeur - état et calibration /!\
 
 Le chemin encodeur est maintenant **câblé** (lecture active, sélection par `use_encoder`, bascule
 par la touche `'c'`), mais **pas encore utilisable en confiance** : trois paramètres ne sont pas
