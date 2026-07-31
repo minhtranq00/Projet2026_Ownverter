@@ -63,7 +63,7 @@ void application_task();
 #define HALL3 PD2
 
 #define MY_INVERTER_ID 5 // LEFT_MOTOR = 5, RIGHT_MOTOR = 4
-
+#define USE_ENCODER // comment -> use Hall sensors + PLL, uncomment -> use Encoder
 
 // 3. Create the RS485 object
 Rs485Communication rs485;
@@ -243,7 +243,7 @@ static const float32_t pole_pairs = 4.0F; // Motor 8 poles -> 4 pole pairs
 static float32_t angle_prev = 0.0F;
 static float32_t angle_elec_unwrapped = 0.0F;
 
-static bool use_encoder = false; // false = Hall + PLL, true = encoder
+//static bool use_encoder = false; // false = Hall + PLL, true = encoder
 /* Encoder for position control */
 static int32_t encoder_count = 0;
 static const int32_t ENCODER_COUNTS_PER_REV = 100 * 4 / (capstan_gear / motor_gear); // adapt to encoder resolution
@@ -607,7 +607,7 @@ inline void get_position_and_speed()
 	angle_elec_unwrapped += delta;
 	angle_prev = angle_filtered; //angle_filtered theta_e_hat;
 
-	float32_t theta_m_hall = (angle_elec_unwrapped / pole_pairs);
+	//float32_t theta_m_hall = (angle_elec_unwrapped / pole_pairs);
 
 	/* Encoder */
 	//omega_m = omega_e_hat / pole_pairs; // omega_e_hat / pole_pairs; // omega_m * 0.95F + (omega_e_hat / pole_pairs) * 0.05F;
@@ -616,7 +616,13 @@ inline void get_position_and_speed()
 	theta_e_encoder = ot_modulo_2pi((pole_pairs * theta_m_encoder) + encoder_offset);
 
 	/* Selection of the source of position*/
-	theta_m = use_encoder ? theta_m_encoder : theta_m_hall;
+	//theta_m = use_encoder ? theta_m_encoder : theta_m_hall;
+
+	#ifdef USE_ENCODER
+		theta_m = theta_m_encoder;
+	#else
+		theta_m = angle_elec_unwrapped / pole_pairs;
+	#endif
 
 	omega_m = w_mes_filter.calculateWithReturn(pllDatas.w) / pole_pairs;
 }
@@ -765,7 +771,12 @@ inline void control_torque()
 
         return;   
     } */
-	angle_4_control = use_encoder ? theta_e_encoder : angle_filtered;;
+	//angle_4_control = use_encoder ? theta_e_encoder : angle_filtered;
+	#ifdef USE_ENCODER
+		angle_4_control = theta_e_encoder;
+	#else
+		angle_4_control = angle_filtered;
+	#endif
 	 float32_t pos_error = theta_m - theta_m_ref; //theta_m_ref;
 	int_pos += pos_error*Ts*anti_windup;
 	// Idq_ref.q = -K_pos[0][0]*int_pos - K_pos[0][1]*theta_m - K_pos[0][2]*omega_m;
@@ -1138,10 +1149,10 @@ void loop_background_task()
 		//trigger_counter = SCOPE_SIZE;
 		scope.start();
 		break;
-	case 'c':
+/* 	case 'c':
 		use_encoder = !use_encoder;
 		printk("use_encoder = %d\n", use_encoder);
-		break;
+		break; */
 	}
 }
 
